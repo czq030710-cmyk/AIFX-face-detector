@@ -32,7 +32,7 @@ async def detect_faces(
     file: UploadFile = File(...),
     min_detection_confidence: float = Form(0.5),
     crop_scale: float = Form(3.0),
-    shoulder_bias: float = Form(0.8),
+    shoulder_bias: float = Form(0.4),
 ):
     if file.content_type not in {"image/jpeg", "image/png"}:
         raise HTTPException(status_code=400, detail="Only .jpg and .png images are supported.")
@@ -40,8 +40,8 @@ async def detect_faces(
         raise HTTPException(status_code=400, detail="min_detection_confidence must be between 0.0 and 1.0.")
     if not 1.0 <= crop_scale <= 5.0:
         raise HTTPException(status_code=400, detail="crop_scale must be between 1.0 and 5.0.")
-    if not 0.0 <= shoulder_bias <= 1.5:
-        raise HTTPException(status_code=400, detail="shoulder_bias must be between 0.0 and 1.5.")
+    if not -1.5 <= shoulder_bias <= 1.5:
+        raise HTTPException(status_code=400, detail="shoulder_bias must be between -1.5 and 1.5.")
 
     image_bytes = await file.read()
     try:

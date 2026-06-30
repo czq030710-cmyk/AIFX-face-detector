@@ -10,7 +10,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - `core_ai/models/blaze_face_short_range.tflite` remains available as a fallback model.
 - FastAPI provides `/health` and `/detect-faces`.
 - Streamlit provides a local upload workspace.
-- The Streamlit sidebar has linked slider-plus-number controls for confidence, crop expansion, and shoulder-padding.
+- The Streamlit sidebar has linked slider-plus-number controls for confidence, crop expansion, and vertical crop offset.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked.
 - Green boxes show the saved crop region on the original image.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
@@ -72,7 +72,7 @@ The frontend exposes controls for the main detection and crop parameters:
 
 - `Confidence threshold`
 - `Crop expansion`
-- `Shoulder padding`
+- `Vertical offset`
 
 Each control pairs a slider with a precise number input. Changing either side updates the same value, so manual edits and slider movement stay in sync.
 Hover over a control label in the frontend to see a short explanation of what that parameter changes.
@@ -96,13 +96,13 @@ Lower values find more faces; higher values filter more aggressively.
 Crop controls:
 
 - `crop_scale`: expands the detected face box into a larger square portrait-style crop.
-- `shoulder_bias`: shifts the square crop downward slightly to include more shoulders without making the crop tall and narrow.
+- `shoulder_bias`: shifts the square crop vertically without changing its square shape.
 
 Parameter meanings:
 
 - `min_detection_confidence`: how strict face detection is. Lower values improve recall; higher values reduce false positives.
 - `crop_scale`: how large the final square crop is around the detected face.
-- `shoulder_bias`: how far the square crop is shifted downward to include shoulders.
+- `shoulder_bias`: vertical crop offset. Negative values move the crop upward, `0` keeps it centered, and positive values move it downward to include more shoulders.
 
 The API stores the expanded crop image under `storage/crops/`, while the response keeps both coordinate sets:
 

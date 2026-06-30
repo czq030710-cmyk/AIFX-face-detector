@@ -31,7 +31,7 @@ def init_control_state(name, default, minimum, maximum):
 
 init_control_state("min_confidence", 0.5, 0.01, 0.99)
 init_control_state("crop_scale", 3.0, 1.0, 5.0)
-init_control_state("shoulder_bias", 0.6, 0.0, 1.5)
+init_control_state("shoulder_bias", 0.4, -1.5, 1.5)
 
 
 def sync_confidence_slider():
@@ -59,13 +59,13 @@ def sync_crop_scale_input():
 
 
 def sync_shoulder_bias_slider():
-    value = clamp_value(st.session_state.shoulder_bias_slider, 0.0, 1.5)
+    value = clamp_value(st.session_state.shoulder_bias_slider, -1.5, 1.5)
     st.session_state.shoulder_bias = value
     st.session_state.shoulder_bias_input = value
 
 
 def sync_shoulder_bias_input():
-    value = clamp_value(st.session_state.shoulder_bias_input, 0.0, 1.5)
+    value = clamp_value(st.session_state.shoulder_bias_input, -1.5, 1.5)
     st.session_state.shoulder_bias = value
     st.session_state.shoulder_bias_slider = value
 
@@ -134,15 +134,15 @@ linked_slider_number(
     ),
 )
 linked_slider_number(
-    "Shoulder padding",
+    "Vertical offset",
     "shoulder_bias",
-    0.0,
+    -1.5,
     1.5,
     sync_shoulder_bias_slider,
     sync_shoulder_bias_input,
     help_text=(
-        "Controls how far the square crop shifts downward. Higher values include more shoulders; "
-        "lower values keep the face closer to the center."
+        "Controls vertical crop position. Negative values move the square crop upward, "
+        "0 keeps it centered, and positive values move it downward to include more shoulders."
     ),
 )
 
