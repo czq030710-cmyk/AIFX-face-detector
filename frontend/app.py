@@ -1,6 +1,7 @@
-import base64
 import os
+from io import BytesIO
 
+from PIL import Image, ImageDraw
 import requests
 import streamlit as st
 
@@ -16,8 +17,10 @@ st.sidebar.info("Local prototype mode. Supabase Auth will be added in the next p
 st.sidebar.header("Detection Controls")
 st.sidebar.caption("Lower values find more small/side faces, but may add false positives.")
 
-if "min_confidence" not in st.session_state:
-    st.session_state.min_confidence = 0.5
+st.session_state.min_confidence = min(
+    0.9,
+    max(0.1, round(st.session_state.get("min_confidence", 0.5), 1)),
+)
 
 
 def sync_confidence_slider():
@@ -30,24 +33,55 @@ def sync_confidence_input():
 
 st.sidebar.slider(
     "Confidence threshold",
-    min_value=0.05,
-    max_value=0.95,
+    min_value=0.1,
+    max_value=0.9,
     value=st.session_state.min_confidence,
-    step=0.05,
+    step=0.1,
     key="confidence_slider",
     on_change=sync_confidence_slider,
 )
 st.sidebar.number_input(
     "Manual threshold",
-    min_value=0.05,
-    max_value=0.95,
+    min_value=0.1,
+    max_value=0.9,
     value=st.session_state.min_confidence,
-    step=0.01,
-    format="%.2f",
+    step=0.1,
+    format="%.1f",
     key="confidence_input",
     on_change=sync_confidence_input,
 )
-st.sidebar.metric("Current threshold", f"{st.session_state.min_confidence:.2f}")
+st.sidebar.metric("Current threshold", f"{st.session_state.min_confidence:.1f}")
+
+
+def draw_detection_overlay(image_bytes, faces):
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    draw = ImageDraw.Draw(image)
+    line_width = max(3, int(max(image.size) / 260))
+
+    for face in faces:
+        bbox = face["bbox"]
+        x_min = int(bbox["x_min"])
+        y_min = int(bbox["y_min"])
+        x_max = x_min + int(bbox["width"])
+        y_max = y_min + int(bbox["height"])
+        label = (
+            f"Face {face['face_index']} | "
+            f"x={x_min} y={y_min} w={int(bbox['width'])} h={int(bbox['height'])} | "
+            f"{bbox['confidence']:.2f}"
+        )
+
+        draw.rectangle((x_min, y_min, x_max, y_max), outline="#00E676", width=line_width)
+        label_bbox = draw.textbbox((x_min, y_min), label)
+        label_height = label_bbox[3] - label_bbox[1]
+        label_width = label_bbox[2] - label_bbox[0]
+        label_y = max(0, y_min - label_height - line_width * 2)
+        draw.rectangle(
+            (x_min, label_y, x_min + label_width + line_width * 2, label_y + label_height + line_width * 2),
+            fill="#00E676",
+        )
+        draw.text((x_min + line_width, label_y + line_width), label, fill="#111111")
+
+    return image
 
 tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
 
@@ -56,7 +90,7 @@ with tab_workspace:
 
     if uploaded_file is not None:
         image_bytes = uploaded_file.getvalue()
-        st.image(image_bytes, caption="Original image", use_container_width=True)
+        st.image(image_bytes, caption="Original image", width="stretch")
 
         if st.button("Detect faces", type="primary"):
             with st.spinner("Detecting faces..."):
@@ -90,13 +124,16 @@ with tab_workspace:
                     )
 
                     if result["faces"]:
-                        columns = st.columns(min(result["face_count"], 3))
-                        for index, face in enumerate(result["faces"]):
-                            image_data = base64.b64decode(face["preview_base64"])
-                            with columns[index % len(columns)]:
-                                st.image(image_data, caption=f"Face {face['face_index']}", use_container_width=True)
+                        overlay = draw_detection_overlay(image_bytes, result["faces"])
+                        st.subheader("Detected locations on original image")
+                        st.image(overlay, caption="Green boxes show the regions used for cropping.", width="stretch")
+
+                        st.subheader("Detection metadata")
+                        st.caption("Cropped face files are saved locally, but hidden here to keep the workspace focused.")
+                        for face in result["faces"]:
+                            with st.expander(f"Face {face['face_index']} metadata", expanded=True):
                                 st.json(face["bbox"])
-                                st.caption(f"Local URL: {API_URL}{face['url']}")
+                                st.caption(f"Saved crop URL: {API_URL}{face['url']}")
 
 with tab_history:
     st.info("Task history will be connected after Supabase Auth, Database, and Storage are added.")

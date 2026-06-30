@@ -11,7 +11,9 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - FastAPI provides `/health` and `/detect-faces`.
 - Streamlit provides a local upload workspace.
 - The Streamlit sidebar has a confidence-threshold slider and manual input for tuning detection sensitivity.
+- Detection results are drawn back onto the full original image so crop locations can be visually checked.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
+- Cropped face files are saved for later backend/Supabase use, but the frontend keeps them hidden and shows only metadata plus saved URLs.
 - Supabase Auth, Storage, task history, Docker, and full README setup are next.
 
 ## Working Agreement
@@ -76,11 +78,11 @@ The value is sent to `POST /detect-faces` as:
 min_detection_confidence
 ```
 
-Suggested values:
+The controls use `0.1` increments. Suggested values:
 
-- `0.50`: default, cleaner results for most images.
-- `0.35`: better recall for smaller faces.
-- `0.25`: useful for difficult images, but may introduce false positives.
+- `0.5`: default, cleaner results for most images.
+- `0.3`: better recall for smaller faces.
+- `0.2`: useful for difficult images, but may introduce false positives.
 
 Lower values find more faces; higher values filter more aggressively.
 
