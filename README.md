@@ -12,7 +12,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Streamlit provides a local upload workspace.
 - The Streamlit sidebar has linked slider-plus-number controls for confidence, crop expansion, and shoulder-padding.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked.
-- Green boxes show the saved crop region; yellow boxes show the smaller detected face region.
+- Green boxes show the saved crop region on the original image.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
 - Cropped face files are saved for later backend/Supabase use, but the frontend keeps them hidden and shows only metadata plus saved URLs.
 - Supabase Auth, Storage, task history, Docker, and full README setup are next.

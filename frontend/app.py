@@ -151,16 +151,6 @@ def draw_detection_overlay(image_bytes, faces):
         )
 
         draw.rectangle((x_min, y_min, x_max, y_max), outline="#00E676", width=line_width)
-        draw.rectangle(
-            (
-                int(face_bbox["x_min"]),
-                int(face_bbox["y_min"]),
-                int(face_bbox["x_min"] + face_bbox["width"]),
-                int(face_bbox["y_min"] + face_bbox["height"]),
-            ),
-            outline="#FFD54F",
-            width=max(2, line_width // 2),
-        )
         label_bbox = draw.textbbox((x_min, y_min), label)
         label_height = label_bbox[3] - label_bbox[1]
         label_width = label_bbox[2] - label_bbox[0]
