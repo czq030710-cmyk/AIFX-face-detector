@@ -10,8 +10,9 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - `core_ai/models/blaze_face_short_range.tflite` remains available as a fallback model.
 - FastAPI provides `/health` and `/detect-faces`.
 - Streamlit provides a local upload workspace.
-- The Streamlit sidebar has a confidence-threshold slider and manual input for tuning detection sensitivity.
+- The Streamlit sidebar has confidence, crop expansion, and shoulder-padding controls for tuning detection/cropping.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked.
+- Green boxes show the saved crop region; yellow boxes show the smaller detected face region.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
 - Cropped face files are saved for later backend/Supabase use, but the frontend keeps them hidden and shows only metadata plus saved URLs.
 - Supabase Auth, Storage, task history, Docker, and full README setup are next.
@@ -65,26 +66,42 @@ Override with:
 API_URL=http://127.0.0.1:8000 streamlit run frontend/app.py
 ```
 
-## Detection Tuning
+## Detection And Crop Tuning
 
-The frontend exposes two controls for the same backend parameter:
+The frontend exposes controls for the main detection and crop parameters:
 
 - `Confidence threshold` slider
 - `Manual threshold` numeric input
+- `Crop expansion` slider
+- `Manual crop expansion` numeric input
+- `Shoulder padding` slider
+- `Manual shoulder padding` numeric input
 
-The value is sent to `POST /detect-faces` as:
+The values are sent to `POST /detect-faces` as:
 
 ```text
 min_detection_confidence
+crop_scale
+shoulder_bias
 ```
 
-The controls use `0.1` increments. Suggested values:
+The tuning controls use `0.01` increments. Suggested confidence values:
 
 - `0.5`: default, cleaner results for most images.
 - `0.3`: better recall for smaller faces.
 - `0.2`: useful for difficult images, but may introduce false positives.
 
 Lower values find more faces; higher values filter more aggressively.
+
+Crop controls:
+
+- `crop_scale`: expands the detected face box into a larger portrait-style crop.
+- `shoulder_bias`: shifts the crop downward to include more shoulders.
+
+The API stores the expanded crop image under `storage/crops/`, while the response keeps both coordinate sets:
+
+- `face_bbox`: the smaller model-detected face region.
+- `crop_bbox`: the expanded region actually saved as the cropped image.
 
 ## API Response Shape
 
@@ -95,20 +112,32 @@ Lower values find more faces; higher values filter more aggressively.
 - `cropped_image_urls`
 - `bounding_boxes`
 - `min_detection_confidence`
+- `crop_scale`
+- `shoulder_bias`
 - `face_count`
 - `faces`
 
-Bounding boxes are stored in original image pixel coordinates:
+Bounding boxes are stored in original image pixel coordinates. Each face includes both the detected face box and the expanded crop box:
 
 ```json
 {
   "face_index": 0,
-  "x_min": 185,
-  "y_min": 214,
-  "width": 174,
-  "height": 174,
-  "confidence": 0.8444,
-  "image_width": 512,
-  "image_height": 512
+  "face_bbox": {
+    "x_min": 185,
+    "y_min": 214,
+    "width": 174,
+    "height": 174,
+    "confidence": 0.8444,
+    "image_width": 512,
+    "image_height": 512
+  },
+  "crop_bbox": {
+    "x_min": 0,
+    "y_min": 153,
+    "width": 512,
+    "height": 359,
+    "image_width": 512,
+    "image_height": 512
+  }
 }
 ```

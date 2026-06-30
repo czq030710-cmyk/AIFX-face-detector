@@ -17,10 +17,9 @@ st.sidebar.info("Local prototype mode. Supabase Auth will be added in the next p
 st.sidebar.header("Detection Controls")
 st.sidebar.caption("Lower values find more small/side faces, but may add false positives.")
 
-st.session_state.min_confidence = min(
-    0.9,
-    max(0.1, round(st.session_state.get("min_confidence", 0.5), 1)),
-)
+st.session_state.min_confidence = min(0.99, max(0.01, round(st.session_state.get("min_confidence", 0.5), 2)))
+st.session_state.crop_scale = min(5.0, max(1.0, round(st.session_state.get("crop_scale", 3.0), 2)))
+st.session_state.shoulder_bias = min(1.5, max(0.0, round(st.session_state.get("shoulder_bias", 0.8), 2)))
 
 
 def sync_confidence_slider():
@@ -31,26 +30,82 @@ def sync_confidence_input():
     st.session_state.min_confidence = st.session_state.confidence_input
 
 
+def sync_crop_scale_slider():
+    st.session_state.crop_scale = st.session_state.crop_scale_slider
+
+
+def sync_crop_scale_input():
+    st.session_state.crop_scale = st.session_state.crop_scale_input
+
+
+def sync_shoulder_bias_slider():
+    st.session_state.shoulder_bias = st.session_state.shoulder_bias_slider
+
+
+def sync_shoulder_bias_input():
+    st.session_state.shoulder_bias = st.session_state.shoulder_bias_input
+
+
 st.sidebar.slider(
     "Confidence threshold",
-    min_value=0.1,
-    max_value=0.9,
+    min_value=0.01,
+    max_value=0.99,
     value=st.session_state.min_confidence,
-    step=0.1,
+    step=0.01,
     key="confidence_slider",
     on_change=sync_confidence_slider,
 )
 st.sidebar.number_input(
     "Manual threshold",
-    min_value=0.1,
-    max_value=0.9,
+    min_value=0.01,
+    max_value=0.99,
     value=st.session_state.min_confidence,
-    step=0.1,
-    format="%.1f",
+    step=0.01,
+    format="%.2f",
     key="confidence_input",
     on_change=sync_confidence_input,
 )
-st.sidebar.metric("Current threshold", f"{st.session_state.min_confidence:.1f}")
+st.sidebar.slider(
+    "Crop expansion",
+    min_value=1.0,
+    max_value=5.0,
+    value=st.session_state.crop_scale,
+    step=0.01,
+    key="crop_scale_slider",
+    on_change=sync_crop_scale_slider,
+)
+st.sidebar.number_input(
+    "Manual crop expansion",
+    min_value=1.0,
+    max_value=5.0,
+    value=st.session_state.crop_scale,
+    step=0.01,
+    format="%.2f",
+    key="crop_scale_input",
+    on_change=sync_crop_scale_input,
+)
+st.sidebar.slider(
+    "Shoulder padding",
+    min_value=0.0,
+    max_value=1.5,
+    value=st.session_state.shoulder_bias,
+    step=0.01,
+    key="shoulder_bias_slider",
+    on_change=sync_shoulder_bias_slider,
+)
+st.sidebar.number_input(
+    "Manual shoulder padding",
+    min_value=0.0,
+    max_value=1.5,
+    value=st.session_state.shoulder_bias,
+    step=0.01,
+    format="%.2f",
+    key="shoulder_bias_input",
+    on_change=sync_shoulder_bias_input,
+)
+st.sidebar.metric("Current threshold", f"{st.session_state.min_confidence:.2f}")
+st.sidebar.metric("Crop expansion", f"{st.session_state.crop_scale:.2f}x")
+st.sidebar.metric("Shoulder padding", f"{st.session_state.shoulder_bias:.2f}")
 
 
 def draw_detection_overlay(image_bytes, faces):
@@ -59,18 +114,29 @@ def draw_detection_overlay(image_bytes, faces):
     line_width = max(3, int(max(image.size) / 260))
 
     for face in faces:
-        bbox = face["bbox"]
+        bbox = face["crop_bbox"]
+        face_bbox = face["face_bbox"]
         x_min = int(bbox["x_min"])
         y_min = int(bbox["y_min"])
         x_max = x_min + int(bbox["width"])
         y_max = y_min + int(bbox["height"])
         label = (
             f"Face {face['face_index']} | "
-            f"x={x_min} y={y_min} w={int(bbox['width'])} h={int(bbox['height'])} | "
-            f"{bbox['confidence']:.2f}"
+            f"crop x={x_min} y={y_min} w={int(bbox['width'])} h={int(bbox['height'])} | "
+            f"face {face_bbox['confidence']:.2f}"
         )
 
         draw.rectangle((x_min, y_min, x_max, y_max), outline="#00E676", width=line_width)
+        draw.rectangle(
+            (
+                int(face_bbox["x_min"]),
+                int(face_bbox["y_min"]),
+                int(face_bbox["x_min"] + face_bbox["width"]),
+                int(face_bbox["y_min"] + face_bbox["height"]),
+            ),
+            outline="#FFD54F",
+            width=max(2, line_width // 2),
+        )
         label_bbox = draw.textbbox((x_min, y_min), label)
         label_height = label_bbox[3] - label_bbox[1]
         label_width = label_bbox[2] - label_bbox[0]
@@ -101,7 +167,11 @@ with tab_workspace:
                         uploaded_file.type or "application/octet-stream",
                     )
                 }
-                data = {"min_detection_confidence": st.session_state.min_confidence}
+                data = {
+                    "min_detection_confidence": st.session_state.min_confidence,
+                    "crop_scale": st.session_state.crop_scale,
+                    "shoulder_bias": st.session_state.shoulder_bias,
+                }
                 try:
                     response = requests.post(f"{API_URL}/detect-faces", files=files, data=data, timeout=60)
                     response.raise_for_status()
@@ -117,6 +187,8 @@ with tab_workspace:
                             "original_image_url": result["original_image_url"],
                             "cropped_image_urls": result["cropped_image_urls"],
                             "min_detection_confidence": result["min_detection_confidence"],
+                            "crop_scale": result["crop_scale"],
+                            "shoulder_bias": result["shoulder_bias"],
                             "image_width": result["image_width"],
                             "image_height": result["image_height"],
                             "face_count": result["face_count"],
@@ -132,7 +204,7 @@ with tab_workspace:
                         st.caption("Cropped face files are saved locally, but hidden here to keep the workspace focused.")
                         for face in result["faces"]:
                             with st.expander(f"Face {face['face_index']} metadata", expanded=True):
-                                st.json(face["bbox"])
+                                st.json({"face_bbox": face["face_bbox"], "crop_bbox": face["crop_bbox"]})
                                 st.caption(f"Saved crop URL: {API_URL}{face['url']}")
 
 with tab_history:
