@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+mediapipe
+Pillow
+python-multipart
+supabase
+streamlit
