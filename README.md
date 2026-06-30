@@ -77,6 +77,12 @@ The frontend exposes controls for the main detection and crop parameters:
 Each control pairs a slider with a precise number input. Changing either side updates the same value, so manual edits and slider movement stay in sync.
 Hover over a control label in the frontend to see a short explanation of what that parameter changes.
 
+Default recommended preset:
+
+- `Confidence threshold`: `0.23`
+- `Crop expansion`: `2.20`
+- `Vertical offset`: `0.20`
+
 The values are sent to `POST /detect-faces` as:
 
 ```text
@@ -103,6 +109,11 @@ Parameter meanings:
 - `min_detection_confidence`: how strict face detection is. Lower values improve recall; higher values reduce false positives.
 - `crop_scale`: how large the final square crop is around the detected face.
 - `shoulder_bias`: vertical crop offset. Negative values move the crop upward, `0` keeps it centered, and positive values move it downward to include more shoulders.
+
+The backend also applies a second filtering pass after the model returns candidate faces:
+
+- Overlapping final crop boxes are suppressed so repeated detections around the same person collapse to the best-scoring box.
+- If at least three confident faces are found, very low-confidence leftovers are dropped to reduce decorative false positives from face-like textures.
 
 The API stores the expanded crop image under `storage/crops/`, while the response keeps both coordinate sets:
 

@@ -30,9 +30,9 @@ def health_check():
 @app.post("/detect-faces")
 async def detect_faces(
     file: UploadFile = File(...),
-    min_detection_confidence: float = Form(0.5),
-    crop_scale: float = Form(3.0),
-    shoulder_bias: float = Form(0.4),
+    min_detection_confidence: float = Form(0.23),
+    crop_scale: float = Form(2.2),
+    shoulder_bias: float = Form(0.2),
 ):
     if file.content_type not in {"image/jpeg", "image/png"}:
         raise HTTPException(status_code=400, detail="Only .jpg and .png images are supported.")
@@ -62,7 +62,8 @@ async def detect_faces(
     cropped_image_urls = []
     bounding_boxes = []
 
-    for face_index, face in enumerate(faces):
+    face_candidates = []
+    for detected_index, face in enumerate(faces):
         x = face["x"]
         y = face["y"]
         width = face["width"]
@@ -77,6 +78,30 @@ async def detect_faces(
             crop_scale=crop_scale,
             shoulder_bias=shoulder_bias,
         )
+        face_bbox = {
+            "detected_index": detected_index,
+            "x_min": x,
+            "y_min": y,
+            "width": width,
+            "height": height,
+            "confidence": face["score"],
+            "image_width": image.width,
+            "image_height": image.height,
+        }
+        face_candidates.append(
+            {
+                "face": face,
+                "face_bbox": face_bbox,
+                "crop_bbox": crop_bbox,
+            }
+        )
+
+    filtered_faces = filter_face_candidates(face_candidates)
+
+    for face_index, candidate in enumerate(filtered_faces):
+        crop_bbox = candidate["crop_bbox"]
+        face_bbox = {**candidate["face_bbox"], "face_index": face_index}
+        face_bbox.pop("detected_index", None)
         crop = image.crop(
             (
                 crop_bbox["x_min"],
@@ -95,16 +120,6 @@ async def detect_faces(
 
         crop_url = f"/storage/crops/{crop_filename}"
         cropped_image_urls.append(crop_url)
-        face_bbox = {
-            "face_index": face_index,
-            "x_min": x,
-            "y_min": y,
-            "width": width,
-            "height": height,
-            "confidence": face["score"],
-            "image_width": image.width,
-            "image_height": image.height,
-        }
         bounding_box = {
             "face_index": face_index,
             "face_bbox": face_bbox,
@@ -139,6 +154,57 @@ async def detect_faces(
         "faces": cropped_faces,
         "message": "No faces detected." if not cropped_faces else "Faces detected.",
     }
+
+
+def filter_face_candidates(candidates):
+    crop_nms_iou_threshold = 0.10
+    low_confidence_floor = 0.30
+    enough_confident_faces = 3
+
+    candidates = sorted(
+        candidates,
+        key=lambda candidate: candidate["face_bbox"]["confidence"],
+        reverse=True,
+    )
+    kept = []
+    for candidate in candidates:
+        crop_bbox = candidate["crop_bbox"]
+        if all(bbox_iou(crop_bbox, kept_candidate["crop_bbox"]) < crop_nms_iou_threshold for kept_candidate in kept):
+            kept.append(candidate)
+
+    confident_count = sum(
+        candidate["face_bbox"]["confidence"] >= low_confidence_floor
+        for candidate in kept
+    )
+    if confident_count >= enough_confident_faces:
+        kept = [
+            candidate
+            for candidate in kept
+            if candidate["face_bbox"]["confidence"] >= low_confidence_floor
+        ]
+
+    return kept
+
+
+def bbox_iou(box_a, box_b):
+    ax1 = box_a["x_min"]
+    ay1 = box_a["y_min"]
+    ax2 = ax1 + box_a["width"]
+    ay2 = ay1 + box_a["height"]
+    bx1 = box_b["x_min"]
+    by1 = box_b["y_min"]
+    bx2 = bx1 + box_b["width"]
+    by2 = by1 + box_b["height"]
+
+    intersection_width = max(0, min(ax2, bx2) - max(ax1, bx1))
+    intersection_height = max(0, min(ay2, by2) - max(ay1, by1))
+    intersection = intersection_width * intersection_height
+    if intersection == 0:
+        return 0.0
+
+    area_a = box_a["width"] * box_a["height"]
+    area_b = box_b["width"] * box_b["height"]
+    return intersection / (area_a + area_b - intersection)
 
 
 def expand_face_bbox(

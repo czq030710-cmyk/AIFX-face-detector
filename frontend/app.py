@@ -29,9 +29,9 @@ def init_control_state(name, default, minimum, maximum):
     st.session_state.setdefault(f"{name}_input", value)
 
 
-init_control_state("min_confidence", 0.5, 0.01, 0.99)
-init_control_state("crop_scale", 3.0, 1.0, 5.0)
-init_control_state("shoulder_bias", 0.4, -1.5, 1.5)
+init_control_state("min_confidence", 0.23, 0.01, 0.99)
+init_control_state("crop_scale", 2.2, 1.0, 5.0)
+init_control_state("shoulder_bias", 0.2, -1.5, 1.5)
 
 
 def sync_confidence_slider():
