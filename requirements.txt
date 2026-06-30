@@ -1,7 +1,9 @@
 fastapi
 uvicorn
 mediapipe
+opencv-contrib-python
 Pillow
 python-multipart
+requests
 supabase
 streamlit

@@ -10,19 +10,23 @@ class FaceDetector:
         self,
         min_detection_confidence=0.5,
         model_path=None,
-        input_size=128,
+        input_size=None,
     ):
         """初始化人脸检测器，使用 MediaPipe 官方 BlazeFace 模型。"""
         self.min_detection_confidence = min_detection_confidence
-        self.input_size = input_size
-        default_model_path = Path(__file__).with_name("models") / "blaze_face_short_range.tflite"
+        models_dir = Path(__file__).with_name("models")
+        default_model_path = models_dir / "blaze_face_full_range.tflite"
+        if not default_model_path.exists():
+            default_model_path = models_dir / "blaze_face_short_range.tflite"
         self.model_path = Path(model_path or default_model_path)
 
         if not self.model_path.exists():
             raise FileNotFoundError(f"Face detector model not found: {self.model_path}")
 
+        self.input_size = input_size or self._infer_input_size(self.model_path)
         self.net = cv2.dnn.readNetFromTFLite(str(self.model_path))
         self.output_names = self.net.getUnconnectedOutLayersNames()
+        self.score_output_name, self.box_output_name = self._resolve_output_names()
         self.anchors = self._generate_anchors()
 
     def detect_faces(self, image: Image.Image):
@@ -41,8 +45,8 @@ class FaceDetector:
         self.net.setInput(blob)
         outputs = dict(zip(self.output_names, self.net.forward(self.output_names)))
 
-        raw_scores = outputs["classificators"][0, :, 0]
-        raw_boxes = outputs["regressors"][0]
+        raw_scores = outputs[self.score_output_name][0, :, 0]
+        raw_boxes = outputs[self.box_output_name][0]
 
         boxes = []
         scores = []
@@ -85,6 +89,9 @@ class FaceDetector:
         return faces
 
     def _generate_anchors(self):
+        if self.input_size == 192:
+            return self._generate_full_range_anchors()
+
         anchors = []
         for stride, anchors_per_cell in ((8, 2), (16, 6)):
             feature_map_size = self.input_size // stride
@@ -95,6 +102,30 @@ class FaceDetector:
                     for _ in range(anchors_per_cell):
                         anchors.append((x_center, y_center))
         return np.array(anchors, dtype=np.float32)
+
+    def _generate_full_range_anchors(self):
+        anchors = []
+        feature_map_size = self.input_size // 4
+        for y in range(feature_map_size):
+            for x in range(feature_map_size):
+                x_center = (x + 0.5) / feature_map_size
+                y_center = (y + 0.5) / feature_map_size
+                anchors.append((x_center, y_center))
+        return np.array(anchors, dtype=np.float32)
+
+    def _resolve_output_names(self):
+        output_names = set(self.output_names)
+        if {"classificators", "regressors"}.issubset(output_names):
+            return "classificators", "regressors"
+        if {"reshaped_classifier_face_4", "reshaped_regressor_face_4"}.issubset(output_names):
+            return "reshaped_classifier_face_4", "reshaped_regressor_face_4"
+        raise RuntimeError(f"Unsupported face detector output layers: {self.output_names}")
+
+    @staticmethod
+    def _infer_input_size(model_path: Path):
+        if "full_range" in model_path.name:
+            return 192
+        return 128
 
     @staticmethod
     def _sigmoid(value):
