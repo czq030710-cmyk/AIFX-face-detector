@@ -78,6 +78,7 @@ def linked_slider_number(
     slider_callback,
     input_callback,
     suffix="",
+    help_text=None,
 ):
     slider_col, input_col = st.sidebar.columns([0.68, 0.32])
     with slider_col:
@@ -89,6 +90,7 @@ def linked_slider_number(
             step=0.01,
             key=f"{state_name}_slider",
             on_change=slider_callback,
+            help=help_text,
         )
     with input_col:
         st.number_input(
@@ -101,6 +103,7 @@ def linked_slider_number(
             key=f"{state_name}_input",
             on_change=input_callback,
             label_visibility="collapsed",
+            help=help_text,
         )
     st.sidebar.caption(f"{label}: {st.session_state[state_name]:.2f}{suffix}")
 
@@ -112,6 +115,10 @@ linked_slider_number(
     0.99,
     sync_confidence_slider,
     sync_confidence_input,
+    help_text=(
+        "Controls how strict face detection is. Lower values can find smaller or harder faces, "
+        "but may add false detections. Higher values are cleaner but may miss faces."
+    ),
 )
 linked_slider_number(
     "Crop expansion",
@@ -121,6 +128,10 @@ linked_slider_number(
     sync_crop_scale_slider,
     sync_crop_scale_input,
     "x",
+    help_text=(
+        "Controls how much the detected face is expanded into the final square crop. "
+        "Larger values include more hair, neck, shoulders, and background."
+    ),
 )
 linked_slider_number(
     "Shoulder padding",
@@ -129,6 +140,10 @@ linked_slider_number(
     1.5,
     sync_shoulder_bias_slider,
     sync_shoulder_bias_input,
+    help_text=(
+        "Controls how far the square crop shifts downward. Higher values include more shoulders; "
+        "lower values keep the face closer to the center."
+    ),
 )
 
 

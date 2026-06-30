@@ -75,6 +75,7 @@ The frontend exposes controls for the main detection and crop parameters:
 - `Shoulder padding`
 
 Each control pairs a slider with a precise number input. Changing either side updates the same value, so manual edits and slider movement stay in sync.
+Hover over a control label in the frontend to see a short explanation of what that parameter changes.
 
 The values are sent to `POST /detect-faces` as:
 
@@ -96,6 +97,12 @@ Crop controls:
 
 - `crop_scale`: expands the detected face box into a larger square portrait-style crop.
 - `shoulder_bias`: shifts the square crop downward slightly to include more shoulders without making the crop tall and narrow.
+
+Parameter meanings:
+
+- `min_detection_confidence`: how strict face detection is. Lower values improve recall; higher values reduce false positives.
+- `crop_scale`: how large the final square crop is around the detected face.
+- `shoulder_bias`: how far the square crop is shifted downward to include shoulders.
 
 The API stores the expanded crop image under `storage/crops/`, while the response keeps both coordinate sets:
 
