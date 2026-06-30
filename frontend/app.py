@@ -17,95 +17,119 @@ st.sidebar.info("Local prototype mode. Supabase Auth will be added in the next p
 st.sidebar.header("Detection Controls")
 st.sidebar.caption("Lower values find more small/side faces, but may add false positives.")
 
-st.session_state.min_confidence = min(0.99, max(0.01, round(st.session_state.get("min_confidence", 0.5), 2)))
-st.session_state.crop_scale = min(5.0, max(1.0, round(st.session_state.get("crop_scale", 3.0), 2)))
-st.session_state.shoulder_bias = min(1.5, max(0.0, round(st.session_state.get("shoulder_bias", 0.8), 2)))
+
+def clamp_value(value, minimum, maximum):
+    return min(maximum, max(minimum, round(float(value), 2)))
+
+
+def init_control_state(name, default, minimum, maximum):
+    value = clamp_value(st.session_state.get(name, default), minimum, maximum)
+    st.session_state[name] = value
+    st.session_state.setdefault(f"{name}_slider", value)
+    st.session_state.setdefault(f"{name}_input", value)
+
+
+init_control_state("min_confidence", 0.5, 0.01, 0.99)
+init_control_state("crop_scale", 3.0, 1.0, 5.0)
+init_control_state("shoulder_bias", 0.6, 0.0, 1.5)
 
 
 def sync_confidence_slider():
-    st.session_state.min_confidence = st.session_state.confidence_slider
+    value = clamp_value(st.session_state.min_confidence_slider, 0.01, 0.99)
+    st.session_state.min_confidence = value
+    st.session_state.min_confidence_input = value
 
 
 def sync_confidence_input():
-    st.session_state.min_confidence = st.session_state.confidence_input
+    value = clamp_value(st.session_state.min_confidence_input, 0.01, 0.99)
+    st.session_state.min_confidence = value
+    st.session_state.min_confidence_slider = value
 
 
 def sync_crop_scale_slider():
-    st.session_state.crop_scale = st.session_state.crop_scale_slider
+    value = clamp_value(st.session_state.crop_scale_slider, 1.0, 5.0)
+    st.session_state.crop_scale = value
+    st.session_state.crop_scale_input = value
 
 
 def sync_crop_scale_input():
-    st.session_state.crop_scale = st.session_state.crop_scale_input
+    value = clamp_value(st.session_state.crop_scale_input, 1.0, 5.0)
+    st.session_state.crop_scale = value
+    st.session_state.crop_scale_slider = value
 
 
 def sync_shoulder_bias_slider():
-    st.session_state.shoulder_bias = st.session_state.shoulder_bias_slider
+    value = clamp_value(st.session_state.shoulder_bias_slider, 0.0, 1.5)
+    st.session_state.shoulder_bias = value
+    st.session_state.shoulder_bias_input = value
 
 
 def sync_shoulder_bias_input():
-    st.session_state.shoulder_bias = st.session_state.shoulder_bias_input
+    value = clamp_value(st.session_state.shoulder_bias_input, 0.0, 1.5)
+    st.session_state.shoulder_bias = value
+    st.session_state.shoulder_bias_slider = value
 
 
-st.sidebar.slider(
+def linked_slider_number(
+    label,
+    state_name,
+    minimum,
+    maximum,
+    slider_callback,
+    input_callback,
+    suffix="",
+):
+    slider_col, input_col = st.sidebar.columns([0.68, 0.32])
+    with slider_col:
+        st.slider(
+            label,
+            min_value=minimum,
+            max_value=maximum,
+            value=st.session_state[state_name],
+            step=0.01,
+            key=f"{state_name}_slider",
+            on_change=slider_callback,
+        )
+    with input_col:
+        st.number_input(
+            "Exact value",
+            min_value=minimum,
+            max_value=maximum,
+            value=st.session_state[state_name],
+            step=0.01,
+            format="%.2f",
+            key=f"{state_name}_input",
+            on_change=input_callback,
+            label_visibility="collapsed",
+        )
+    st.sidebar.caption(f"{label}: {st.session_state[state_name]:.2f}{suffix}")
+
+
+linked_slider_number(
     "Confidence threshold",
-    min_value=0.01,
-    max_value=0.99,
-    value=st.session_state.min_confidence,
-    step=0.01,
-    key="confidence_slider",
-    on_change=sync_confidence_slider,
+    "min_confidence",
+    0.01,
+    0.99,
+    sync_confidence_slider,
+    sync_confidence_input,
 )
-st.sidebar.number_input(
-    "Manual threshold",
-    min_value=0.01,
-    max_value=0.99,
-    value=st.session_state.min_confidence,
-    step=0.01,
-    format="%.2f",
-    key="confidence_input",
-    on_change=sync_confidence_input,
-)
-st.sidebar.slider(
+linked_slider_number(
     "Crop expansion",
-    min_value=1.0,
-    max_value=5.0,
-    value=st.session_state.crop_scale,
-    step=0.01,
-    key="crop_scale_slider",
-    on_change=sync_crop_scale_slider,
+    "crop_scale",
+    1.0,
+    5.0,
+    sync_crop_scale_slider,
+    sync_crop_scale_input,
+    "x",
 )
-st.sidebar.number_input(
-    "Manual crop expansion",
-    min_value=1.0,
-    max_value=5.0,
-    value=st.session_state.crop_scale,
-    step=0.01,
-    format="%.2f",
-    key="crop_scale_input",
-    on_change=sync_crop_scale_input,
-)
-st.sidebar.slider(
+linked_slider_number(
     "Shoulder padding",
-    min_value=0.0,
-    max_value=1.5,
-    value=st.session_state.shoulder_bias,
-    step=0.01,
-    key="shoulder_bias_slider",
-    on_change=sync_shoulder_bias_slider,
+    "shoulder_bias",
+    0.0,
+    1.5,
+    sync_shoulder_bias_slider,
+    sync_shoulder_bias_input,
 )
-st.sidebar.number_input(
-    "Manual shoulder padding",
-    min_value=0.0,
-    max_value=1.5,
-    value=st.session_state.shoulder_bias,
-    step=0.01,
-    format="%.2f",
-    key="shoulder_bias_input",
-    on_change=sync_shoulder_bias_input,
-)
-st.sidebar.metric("Current threshold", f"{st.session_state.min_confidence:.2f}")
-st.sidebar.metric("Crop expansion", f"{st.session_state.crop_scale:.2f}x")
-st.sidebar.metric("Shoulder padding", f"{st.session_state.shoulder_bias:.2f}")
 
 
 def draw_detection_overlay(image_bytes, faces):

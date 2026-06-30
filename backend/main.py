@@ -151,26 +151,22 @@ def expand_face_bbox(
     crop_scale: float,
     shoulder_bias: float,
 ):
-    crop_width = width * crop_scale
-    crop_height = height * crop_scale * 1.25
+    crop_size = int(round(max(width, height) * crop_scale))
+    crop_size = max(1, min(crop_size, image_width, image_height))
     center_x = x + width / 2
-    center_y = y + height / 2 + height * shoulder_bias
+    center_y = y + height / 2 + height * shoulder_bias * 0.35
 
-    crop_x = int(round(center_x - crop_width / 2))
-    crop_y = int(round(center_y - crop_height / 2))
-    crop_w = int(round(crop_width))
-    crop_h = int(round(crop_height))
+    crop_x = int(round(center_x - crop_size / 2))
+    crop_y = int(round(center_y - crop_size / 2))
 
-    crop_x = max(0, min(crop_x, image_width - 1))
-    crop_y = max(0, min(crop_y, image_height - 1))
-    crop_w = max(1, min(crop_w, image_width - crop_x))
-    crop_h = max(1, min(crop_h, image_height - crop_y))
+    crop_x = max(0, min(crop_x, image_width - crop_size))
+    crop_y = max(0, min(crop_y, image_height - crop_size))
 
     return {
         "x_min": crop_x,
         "y_min": crop_y,
-        "width": crop_w,
-        "height": crop_h,
+        "width": crop_size,
+        "height": crop_size,
         "image_width": image_width,
         "image_height": image_height,
     }
