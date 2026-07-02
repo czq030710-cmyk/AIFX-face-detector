@@ -4,13 +4,97 @@ from io import BytesIO
 from PIL import Image, ImageDraw
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
 
 st.set_page_config(page_title="AIFX Face Processing", layout="wide")
-st.title("AIFX Face Processing")
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] {
+        background: #111318;
+        border-right: 1px solid #2A2D35;
+    }
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] p {
+        color: #F4F6FA;
+    }
+    .account-panel {
+        border: 1px solid #30343D;
+        border-radius: 8px;
+        padding: 14px 14px 12px;
+        margin: 8px 0 14px;
+        background: #171A21;
+    }
+    .account-kicker {
+        color: #9DA3AE;
+        font-size: 0.78rem;
+        margin-bottom: 4px;
+    }
+    .account-title {
+        color: #F6F8FB;
+        font-weight: 700;
+        font-size: 1rem;
+        margin-bottom: 6px;
+    }
+    .account-copy {
+        color: #B7BDC8;
+        font-size: 0.86rem;
+        line-height: 1.35;
+    }
+    .mode-pill {
+        display: inline-block;
+        color: #101318;
+        background: #8BE9C5;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        margin-top: 8px;
+    }
+    .mode-pill.local {
+        background: #FFD166;
+    }
+    .login-shell {
+        min-height: 72vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .login-card {
+        width: min(420px, 92vw);
+        border: 1px solid #2A2D35;
+        border-radius: 8px;
+        padding: 28px 28px 20px;
+        background: #151820;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+    }
+    .login-brand {
+        color: #F7F8FA;
+        font-size: 1.75rem;
+        font-weight: 760;
+        margin-bottom: 6px;
+    }
+    .login-subtitle {
+        color: #A9AFBA;
+        line-height: 1.45;
+        margin-bottom: 18px;
+    }
+    .login-note {
+        color: #8D94A1;
+        font-size: 0.86rem;
+        line-height: 1.45;
+        margin-top: 14px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_data(ttl=10)
@@ -55,41 +139,94 @@ def save_auth_session(auth_payload):
         st.sidebar.info(auth_payload.get("message", "Account created. Login may require email confirmation."))
 
 
+def submit_auth(auth_mode, email, password, location):
+    endpoint = "login" if auth_mode == "Login" else "signup"
+    try:
+        response = requests.post(
+            f"{API_URL}/auth/{endpoint}",
+            json={"email": email, "password": password},
+            timeout=20,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        location.error(f"{auth_mode} failed: {exc}")
+    else:
+        auth_payload = response.json()
+        token = auth_payload.get("access_token")
+        user = auth_payload.get("user") or {}
+        if token:
+            st.session_state.auth_token = token
+            st.session_state.auth_user = user
+            st.rerun()
+        else:
+            location.info(auth_payload.get("message", "Account created. Login may require email confirmation."))
+
+
+def render_login_page():
+    st.write("")
+    st.write("")
+    left, middle, right = st.columns([1, 0.9, 1])
+    with middle:
+        st.markdown(
+            """
+            <div class="login-card">
+                <div class="login-brand">AIFX Face Processing</div>
+                <div class="login-subtitle">Sign in to upload images, crop faces, and keep your task history private in Supabase.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        auth_mode = st.radio("Account action", ["Login", "Sign up"], horizontal=True, label_visibility="collapsed")
+        email = st.text_input("Email", placeholder="you@example.com")
+        password = st.text_input("Password", type="password", placeholder="Password")
+        if st.button(auth_mode, type="primary", use_container_width=True):
+            submit_auth(auth_mode, email, password, st)
+        st.caption("Use a test password. This is an app user account, not your Supabase admin login.")
+
+
 api_config = load_api_config()
 supabase_enabled = api_config.get("supabase_enabled", False)
 
-st.sidebar.header("Session")
 if not api_config.get("api_available"):
-    st.sidebar.error(f"Backend unavailable: {api_config.get('error')}")
-elif supabase_enabled:
-    if st.session_state.get("auth_token"):
-        user = st.session_state.get("auth_user") or {}
-        st.sidebar.success(f"Signed in as {user.get('email') or 'user'}")
-        if st.sidebar.button("Sign out"):
-            st.session_state.pop("auth_token", None)
-            st.session_state.pop("auth_user", None)
-            st.rerun()
-    else:
-        auth_mode = st.sidebar.radio("Auth mode", ["Login", "Sign up"], horizontal=True)
-        with st.sidebar.form("auth_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button(auth_mode)
-        if submitted:
-            endpoint = "login" if auth_mode == "Login" else "signup"
-            try:
-                response = requests.post(
-                    f"{API_URL}/auth/{endpoint}",
-                    json={"email": email, "password": password},
-                    timeout=20,
-                )
-                response.raise_for_status()
-            except requests.RequestException as exc:
-                st.sidebar.error(f"{auth_mode} failed: {exc}")
-            else:
-                save_auth_session(response.json())
+    st.error(f"Backend unavailable: {api_config.get('error')}")
+    st.stop()
+
+if supabase_enabled and not st.session_state.get("auth_token"):
+    render_login_page()
+    st.stop()
+
+st.title("AIFX Face Processing")
+
+st.sidebar.header("Session")
+if supabase_enabled:
+    user = st.session_state.get("auth_user") or {}
+    st.sidebar.markdown(
+        f"""
+        <div class="account-panel">
+            <div class="account-kicker">Cloud account</div>
+            <div class="account-title">{user.get('email') or 'Signed in user'}</div>
+            <div class="account-copy">Uploads are saved to Supabase Storage and task history is private to this account.</div>
+            <span class="mode-pill">SUPABASE</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.sidebar.button("Sign out", use_container_width=True):
+        st.session_state.pop("auth_token", None)
+        st.session_state.pop("auth_user", None)
+        st.rerun()
 else:
-    st.sidebar.info("Local demo mode. Add Supabase values in `.env` to enable login, cloud storage, and user-isolated history.")
+    st.sidebar.markdown(
+        """
+        <div class="account-panel">
+            <div class="account-kicker">Local demo</div>
+            <div class="account-title">No cloud connection</div>
+            <div class="account-copy">Uploads and task history stay in the project storage folder.</div>
+            <span class="mode-pill local">LOCAL</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.sidebar.caption(f"Storage provider: {api_config.get('storage_provider', 'unknown')}")
 st.sidebar.header("Detection Controls")
@@ -265,9 +402,7 @@ with tab_workspace:
         image_bytes = uploaded_file.getvalue()
         st.image(image_bytes, caption="Original image", width="stretch")
 
-        if supabase_enabled and not st.session_state.get("auth_token"):
-            st.warning("Please log in before uploading to Supabase storage and task history.")
-        elif st.button("Detect faces", type="primary"):
+        if st.button("Detect faces", type="primary"):
             with st.spinner("Detecting faces..."):
                 files = {
                     "file": (
@@ -325,37 +460,35 @@ with tab_workspace:
                                 st.caption(f"Saved crop URL: {absolute_url(face['url'])}")
 
 with tab_history:
-    if supabase_enabled and not st.session_state.get("auth_token"):
-        st.info("Log in to view your user-isolated task history.")
+    try:
+        response = requests.get(f"{API_URL}/tasks?limit=10", headers=auth_headers(), timeout=20)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        st.error(f"Could not load task history: {exc}")
     else:
-        try:
-            response = requests.get(f"{API_URL}/tasks", headers=auth_headers(), timeout=20)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            st.error(f"Could not load task history: {exc}")
-        else:
-            history = response.json()
-            tasks = history.get("tasks", [])
-            st.caption(
-                f"Storage provider: {history.get('storage_provider')} | "
-                f"User: {history.get('user_id')}"
+        history = response.json()
+        tasks = history.get("tasks", [])
+        st.caption(
+            f"Storage provider: {history.get('storage_provider')} | "
+            f"User: {history.get('user_id')}"
+        )
+        st.caption("Showing the latest 10 tasks. New detections appear here after the next refresh.")
+        if not tasks:
+            st.info("No task history yet.")
+        for task in tasks:
+            title = (
+                f"{task.get('created_at', 'unknown time')} | "
+                f"{task.get('filename', 'image')} | "
+                f"{task.get('face_count', 0)} face(s)"
             )
-            if not tasks:
-                st.info("No task history yet.")
-            for task in tasks:
-                title = (
-                    f"{task.get('created_at', 'unknown time')} | "
-                    f"{task.get('filename', 'image')} | "
-                    f"{task.get('face_count', 0)} face(s)"
+            with st.expander(title):
+                st.json(
+                    {
+                        "task_id": task.get("task_id"),
+                        "status": task.get("status"),
+                        "original_image_url": task.get("original_image_url"),
+                        "cropped_image_urls": task.get("cropped_image_urls", []),
+                        "settings": task.get("settings", {}),
+                        "bounding_boxes": task.get("bounding_boxes", []),
+                    }
                 )
-                with st.expander(title):
-                    st.json(
-                        {
-                            "task_id": task.get("task_id"),
-                            "status": task.get("status"),
-                            "original_image_url": task.get("original_image_url"),
-                            "cropped_image_urls": task.get("cropped_image_urls", []),
-                            "settings": task.get("settings", {}),
-                            "bounding_boxes": task.get("bounding_boxes", []),
-                        }
-                    )

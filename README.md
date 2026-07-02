@@ -17,7 +17,9 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Cropped face files are saved for later backend/Supabase use, but the frontend keeps them hidden and shows only metadata plus saved URLs.
 - Day 3 auth/storage/history flow is implemented.
 - If Supabase credentials are configured, the app uses Supabase Auth, Storage, and the `task_history` table with per-user history.
+- If Supabase credentials are configured, users must log in before using the workspace.
 - If Supabase credentials are missing, the app stays usable in local demo mode and writes task history to `storage/task_history.json`.
+- The task history view shows the latest 10 tasks for the current logged-in user.
 - Docker and final QA are next.
 
 ## Working Agreement
@@ -101,14 +103,14 @@ SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_STORAGE_BUCKET=face-processing
 ```
 
-When all three Supabase keys are set, the backend switches from local demo storage to Supabase:
+When all three Supabase keys are set, the backend enables cloud accounts:
 
 - `/auth/signup` creates users through Supabase Auth.
 - `/auth/login` returns a Bearer token used by the frontend.
 - `/detect-faces` requires login, uploads original/crop images to Supabase Storage, and writes a `task_history` row.
-- `/tasks` returns only the logged-in user's history.
+- `/tasks` requires login and returns the latest 10 tasks for that user's Supabase history.
 
-The frontend sidebar shows Login, Sign up, and Sign out controls only when Supabase is configured.
+When Supabase is configured, the frontend shows a login-first page. After login, the same browser session stays signed in while the app is running.
 
 Local demo mode:
 
@@ -216,8 +218,8 @@ Bounding boxes are stored in original image pixel coordinates. Each face include
 Implemented:
 
 - Supabase Auth endpoints: `POST /auth/signup`, `POST /auth/login`.
-- Auth-aware detection: Supabase mode uses Bearer token user identity; local mode uses `local-demo-user`.
+- Auth-aware detection: Supabase mode uses Bearer token user identity; local demo mode uses a local user id.
 - Supabase Storage upload path: `{user_id}/{task_id}/original.*` and `{user_id}/{task_id}/crops/*.png`.
 - Task history persistence: Supabase `task_history` table or local `storage/task_history.json`.
-- Frontend session controls and history tab.
+- Login-first frontend session controls and latest-10 history tab.
 - Database/storage schema in `database/schema.sql`.

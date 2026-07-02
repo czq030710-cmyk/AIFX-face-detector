@@ -62,7 +62,7 @@ def sign_in(credentials: AuthCredentials):
 
 @app.get("/tasks")
 def list_tasks(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=10, ge=1, le=10),
     user: UserContext = Depends(get_current_user),
 ):
     if supabase_gateway.enabled:
@@ -108,6 +108,7 @@ async def detect_faces(
     original_bytes = original_buffer.getvalue()
     original_path.write_bytes(original_bytes)
     original_image_url = f"/storage/originals/{original_filename}"
+    storage_provider = "supabase" if supabase_gateway.enabled else "local"
     if supabase_gateway.enabled:
         original_image_url = supabase_gateway.upload_bytes(
             f"{user.user_id}/{task_id}/original{original_extension}",
@@ -208,7 +209,7 @@ async def detect_faces(
         "status": "completed",
         "filename": file.filename,
         "user_id": user.user_id,
-        "storage_provider": "supabase" if supabase_gateway.enabled else "local",
+        "storage_provider": storage_provider,
         "original_image_url": original_image_url,
         "cropped_image_urls": cropped_image_urls,
         "bounding_boxes": bounding_boxes,
