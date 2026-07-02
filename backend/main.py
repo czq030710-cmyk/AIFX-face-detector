@@ -1,30 +1,79 @@
 from base64 import b64encode
+from datetime import datetime, timezone
 from io import BytesIO
+import json
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel
 
 from core_ai.face_detector import FaceDetector
+from backend.supabase_client import SupabaseGateway, UserContext
 
 
 app = FastAPI(title="AIFX Phase 1 Face Processing API")
 detector = FaceDetector()
+supabase_gateway = SupabaseGateway()
 
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 ORIGINALS_DIR = STORAGE_DIR / "originals"
 CROPS_DIR = STORAGE_DIR / "crops"
+LOCAL_HISTORY_PATH = STORAGE_DIR / "task_history.json"
 for directory in (ORIGINALS_DIR, CROPS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 app.mount("/storage", StaticFiles(directory=STORAGE_DIR), name="storage")
 
 
+class AuthCredentials(BaseModel):
+    email: str
+    password: str
+
+
+def get_current_user(authorization: str | None = Header(default=None)) -> UserContext:
+    return supabase_gateway.get_user_from_authorization(authorization)
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "aifx-face-processing-api"}
+
+
+@app.get("/config")
+def get_config():
+    return {
+        "supabase_enabled": supabase_gateway.enabled,
+        "storage_provider": "supabase" if supabase_gateway.enabled else "local",
+    }
+
+
+@app.post("/auth/signup")
+def sign_up(credentials: AuthCredentials):
+    return supabase_gateway.sign_up(credentials.email, credentials.password)
+
+
+@app.post("/auth/login")
+def sign_in(credentials: AuthCredentials):
+    return supabase_gateway.sign_in(credentials.email, credentials.password)
+
+
+@app.get("/tasks")
+def list_tasks(
+    limit: int = Query(default=20, ge=1, le=100),
+    user: UserContext = Depends(get_current_user),
+):
+    if supabase_gateway.enabled:
+        tasks = supabase_gateway.list_tasks(user, limit)
+    else:
+        tasks = read_local_history(limit)
+    return {
+        "storage_provider": "supabase" if supabase_gateway.enabled else "local",
+        "user_id": user.user_id,
+        "tasks": tasks,
+    }
 
 
 @app.post("/detect-faces")
@@ -33,6 +82,7 @@ async def detect_faces(
     min_detection_confidence: float = Form(0.23),
     crop_scale: float = Form(2.2),
     shoulder_bias: float = Form(0.2),
+    user: UserContext = Depends(get_current_user),
 ):
     if file.content_type not in {"image/jpeg", "image/png"}:
         raise HTTPException(status_code=400, detail="Only .jpg and .png images are supported.")
@@ -53,8 +103,17 @@ async def detect_faces(
     original_extension = ".jpg" if file.content_type == "image/jpeg" else ".png"
     original_filename = f"{task_id}_original{original_extension}"
     original_path = ORIGINALS_DIR / original_filename
-    image.save(original_path)
+    original_buffer = BytesIO()
+    image.save(original_buffer, format="JPEG" if original_extension == ".jpg" else "PNG")
+    original_bytes = original_buffer.getvalue()
+    original_path.write_bytes(original_bytes)
     original_image_url = f"/storage/originals/{original_filename}"
+    if supabase_gateway.enabled:
+        original_image_url = supabase_gateway.upload_bytes(
+            f"{user.user_id}/{task_id}/original{original_extension}",
+            original_bytes,
+            file.content_type,
+        )
 
     detector.min_detection_confidence = min_detection_confidence
     faces = detector.detect_faces(image)
@@ -119,6 +178,12 @@ async def detect_faces(
         crop_path.write_bytes(crop_bytes)
 
         crop_url = f"/storage/crops/{crop_filename}"
+        if supabase_gateway.enabled:
+            crop_url = supabase_gateway.upload_bytes(
+                f"{user.user_id}/{task_id}/crops/{crop_filename}",
+                crop_bytes,
+                "image/png",
+            )
         cropped_image_urls.append(crop_url)
         bounding_box = {
             "face_index": face_index,
@@ -138,10 +203,12 @@ async def detect_faces(
             }
         )
 
-    return {
+    response_payload = {
         "task_id": task_id,
         "status": "completed",
         "filename": file.filename,
+        "user_id": user.user_id,
+        "storage_provider": "supabase" if supabase_gateway.enabled else "local",
         "original_image_url": original_image_url,
         "cropped_image_urls": cropped_image_urls,
         "bounding_boxes": bounding_boxes,
@@ -154,6 +221,46 @@ async def detect_faces(
         "faces": cropped_faces,
         "message": "No faces detected." if not cropped_faces else "Faces detected.",
     }
+    task_record = {
+        "task_id": task_id,
+        "user_id": user.user_id,
+        "filename": file.filename,
+        "status": "completed",
+        "original_image_url": original_image_url,
+        "cropped_image_urls": cropped_image_urls,
+        "bounding_boxes": bounding_boxes,
+        "face_count": len(cropped_faces),
+        "image_width": image.width,
+        "image_height": image.height,
+        "settings": {
+            "min_detection_confidence": min_detection_confidence,
+            "crop_scale": crop_scale,
+            "shoulder_bias": shoulder_bias,
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_task_history(task_record)
+    return response_payload
+
+
+def save_task_history(record):
+    if supabase_gateway.enabled:
+        supabase_gateway.insert_task(record)
+        return
+
+    records = read_local_history(limit=5000)
+    records.insert(0, record)
+    LOCAL_HISTORY_PATH.write_text(json.dumps(records, indent=2), encoding="utf-8")
+
+
+def read_local_history(limit):
+    if not LOCAL_HISTORY_PATH.exists():
+        return []
+    try:
+        records = json.loads(LOCAL_HISTORY_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return records[:limit]
 
 
 def filter_face_candidates(candidates):

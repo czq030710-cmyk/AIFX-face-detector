@@ -12,8 +12,86 @@ API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 st.set_page_config(page_title="AIFX Face Processing", layout="wide")
 st.title("AIFX Face Processing")
 
+
+@st.cache_data(ttl=10)
+def load_api_config():
+    try:
+        response = requests.get(f"{API_URL}/config", timeout=5)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        return {
+            "api_available": False,
+            "supabase_enabled": False,
+            "storage_provider": "unknown",
+            "error": str(exc),
+        }
+    config = response.json()
+    config["api_available"] = True
+    return config
+
+
+def auth_headers():
+    token = st.session_state.get("auth_token")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def absolute_url(url):
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    return f"{API_URL}{url}"
+
+
+def save_auth_session(auth_payload):
+    token = auth_payload.get("access_token")
+    user = auth_payload.get("user") or {}
+    if token:
+        st.session_state.auth_token = token
+        st.session_state.auth_user = user
+        st.sidebar.success(f"Signed in as {user.get('email') or 'user'}")
+        st.rerun()
+    else:
+        st.sidebar.info(auth_payload.get("message", "Account created. Login may require email confirmation."))
+
+
+api_config = load_api_config()
+supabase_enabled = api_config.get("supabase_enabled", False)
+
 st.sidebar.header("Session")
-st.sidebar.info("Local prototype mode. Supabase Auth will be added in the next phase.")
+if not api_config.get("api_available"):
+    st.sidebar.error(f"Backend unavailable: {api_config.get('error')}")
+elif supabase_enabled:
+    if st.session_state.get("auth_token"):
+        user = st.session_state.get("auth_user") or {}
+        st.sidebar.success(f"Signed in as {user.get('email') or 'user'}")
+        if st.sidebar.button("Sign out"):
+            st.session_state.pop("auth_token", None)
+            st.session_state.pop("auth_user", None)
+            st.rerun()
+    else:
+        auth_mode = st.sidebar.radio("Auth mode", ["Login", "Sign up"], horizontal=True)
+        with st.sidebar.form("auth_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button(auth_mode)
+        if submitted:
+            endpoint = "login" if auth_mode == "Login" else "signup"
+            try:
+                response = requests.post(
+                    f"{API_URL}/auth/{endpoint}",
+                    json={"email": email, "password": password},
+                    timeout=20,
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                st.sidebar.error(f"{auth_mode} failed: {exc}")
+            else:
+                save_auth_session(response.json())
+else:
+    st.sidebar.info("Local demo mode. Add Supabase values in `.env` to enable login, cloud storage, and user-isolated history.")
+
+st.sidebar.caption(f"Storage provider: {api_config.get('storage_provider', 'unknown')}")
 st.sidebar.header("Detection Controls")
 st.sidebar.caption("Lower values find more small/side faces, but may add false positives.")
 
@@ -187,7 +265,9 @@ with tab_workspace:
         image_bytes = uploaded_file.getvalue()
         st.image(image_bytes, caption="Original image", width="stretch")
 
-        if st.button("Detect faces", type="primary"):
+        if supabase_enabled and not st.session_state.get("auth_token"):
+            st.warning("Please log in before uploading to Supabase storage and task history.")
+        elif st.button("Detect faces", type="primary"):
             with st.spinner("Detecting faces..."):
                 files = {
                     "file": (
@@ -202,7 +282,13 @@ with tab_workspace:
                     "shoulder_bias": st.session_state.shoulder_bias,
                 }
                 try:
-                    response = requests.post(f"{API_URL}/detect-faces", files=files, data=data, timeout=60)
+                    response = requests.post(
+                        f"{API_URL}/detect-faces",
+                        files=files,
+                        data=data,
+                        headers=auth_headers(),
+                        timeout=60,
+                    )
                     response.raise_for_status()
                 except requests.RequestException as exc:
                     st.error(f"Detection request failed: {exc}")
@@ -213,6 +299,8 @@ with tab_workspace:
                         {
                             "task_id": result["task_id"],
                             "filename": result["filename"],
+                            "user_id": result["user_id"],
+                            "storage_provider": result["storage_provider"],
                             "original_image_url": result["original_image_url"],
                             "cropped_image_urls": result["cropped_image_urls"],
                             "min_detection_confidence": result["min_detection_confidence"],
@@ -234,7 +322,40 @@ with tab_workspace:
                         for face in result["faces"]:
                             with st.expander(f"Face {face['face_index']} metadata", expanded=True):
                                 st.json({"face_bbox": face["face_bbox"], "crop_bbox": face["crop_bbox"]})
-                                st.caption(f"Saved crop URL: {API_URL}{face['url']}")
+                                st.caption(f"Saved crop URL: {absolute_url(face['url'])}")
 
 with tab_history:
-    st.info("Task history will be connected after Supabase Auth, Database, and Storage are added.")
+    if supabase_enabled and not st.session_state.get("auth_token"):
+        st.info("Log in to view your user-isolated task history.")
+    else:
+        try:
+            response = requests.get(f"{API_URL}/tasks", headers=auth_headers(), timeout=20)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            st.error(f"Could not load task history: {exc}")
+        else:
+            history = response.json()
+            tasks = history.get("tasks", [])
+            st.caption(
+                f"Storage provider: {history.get('storage_provider')} | "
+                f"User: {history.get('user_id')}"
+            )
+            if not tasks:
+                st.info("No task history yet.")
+            for task in tasks:
+                title = (
+                    f"{task.get('created_at', 'unknown time')} | "
+                    f"{task.get('filename', 'image')} | "
+                    f"{task.get('face_count', 0)} face(s)"
+                )
+                with st.expander(title):
+                    st.json(
+                        {
+                            "task_id": task.get("task_id"),
+                            "status": task.get("status"),
+                            "original_image_url": task.get("original_image_url"),
+                            "cropped_image_urls": task.get("cropped_image_urls", []),
+                            "settings": task.get("settings", {}),
+                            "bounding_boxes": task.get("bounding_boxes", []),
+                        }
+                    )

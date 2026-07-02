@@ -15,7 +15,10 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Green boxes show the saved crop region on the original image.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
 - Cropped face files are saved for later backend/Supabase use, but the frontend keeps them hidden and shows only metadata plus saved URLs.
-- Supabase Auth, Storage, task history, Docker, and full README setup are next.
+- Day 3 auth/storage/history flow is implemented.
+- If Supabase credentials are configured, the app uses Supabase Auth, Storage, and the `task_history` table with per-user history.
+- If Supabase credentials are missing, the app stays usable in local demo mode and writes task history to `storage/task_history.json`.
+- Docker and final QA are next.
 
 ## Working Agreement
 
@@ -33,6 +36,14 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Optional environment setup:
+
+```bash
+cp .env.example .env
+```
+
+Leave Supabase values empty for local demo mode. Fill them to enable Day 3 cloud auth, storage, and user-isolated history.
+
 ## Run Backend
 
 ```bash
@@ -43,6 +54,13 @@ Open:
 
 ```text
 http://127.0.0.1:8000/health
+```
+
+Also available:
+
+```text
+http://127.0.0.1:8000/config
+http://127.0.0.1:8000/tasks
 ```
 
 ## Run Frontend
@@ -65,6 +83,38 @@ Override with:
 ```bash
 API_URL=http://127.0.0.1:8000 streamlit run frontend/app.py
 ```
+
+## Supabase Setup
+
+Day 3 is wired for Supabase but still works without credentials.
+
+1. Create a Supabase project.
+2. Open the Supabase SQL editor.
+3. Run `database/schema.sql`.
+4. Copy `.env.example` to `.env`.
+5. Fill:
+
+```text
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_STORAGE_BUCKET=face-processing
+```
+
+When all three Supabase keys are set, the backend switches from local demo storage to Supabase:
+
+- `/auth/signup` creates users through Supabase Auth.
+- `/auth/login` returns a Bearer token used by the frontend.
+- `/detect-faces` requires login, uploads original/crop images to Supabase Storage, and writes a `task_history` row.
+- `/tasks` returns only the logged-in user's history.
+
+The frontend sidebar shows Login, Sign up, and Sign out controls only when Supabase is configured.
+
+Local demo mode:
+
+- No login is required.
+- Uploaded originals and crops are saved under `storage/`.
+- Task history is saved to `storage/task_history.json`.
 
 ## Detection And Crop Tuning
 
@@ -128,6 +178,8 @@ The API stores the expanded crop image under `storage/crops/`, while the respons
 - `original_image_url`
 - `cropped_image_urls`
 - `bounding_boxes`
+- `user_id`
+- `storage_provider`
 - `min_detection_confidence`
 - `crop_scale`
 - `shoulder_bias`
@@ -158,3 +210,14 @@ Bounding boxes are stored in original image pixel coordinates. Each face include
   }
 }
 ```
+
+## Day 3 Completion Notes
+
+Implemented:
+
+- Supabase Auth endpoints: `POST /auth/signup`, `POST /auth/login`.
+- Auth-aware detection: Supabase mode uses Bearer token user identity; local mode uses `local-demo-user`.
+- Supabase Storage upload path: `{user_id}/{task_id}/original.*` and `{user_id}/{task_id}/crops/*.png`.
+- Task history persistence: Supabase `task_history` table or local `storage/task_history.json`.
+- Frontend session controls and history tab.
+- Database/storage schema in `database/schema.sql`.
