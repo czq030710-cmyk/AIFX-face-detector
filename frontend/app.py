@@ -20,9 +20,18 @@ st.markdown(
     }
     html {
         color-scheme: dark;
+        background: #07080D;
     }
     body {
         overflow-x: hidden;
+        background: #07080D;
+    }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stHeader"] {
+        background: transparent;
+    }
+    [data-testid="stDecoration"] {
+        display: none;
     }
     [data-testid="stSidebar"] {
         background: #0B0D13;
@@ -565,21 +574,42 @@ def init_control_state(name, default, minimum, maximum):
     st.session_state[name] = value
 
 
-init_control_state("min_confidence", 0.23, 0.01, 0.99)
+init_control_state("full_range_confidence", 0.10, 0.01, 0.99)
+init_control_state("short_range_confidence", 0.23, 0.01, 0.99)
 init_control_state("crop_scale", 2.2, 1.0, 5.0)
 init_control_state("shoulder_bias", 0.2, -1.5, 1.5)
 
+detection_range_labels = {
+    "balanced": "Balanced full + short",
+    "full_range": "Full range",
+    "short_range": "Short range",
+}
+if st.session_state.get("detection_range") not in detection_range_labels:
+    st.session_state.detection_range = "balanced"
 
-def sync_confidence_slider():
-    value = clamp_value(st.session_state.min_confidence_slider, 0.01, 0.99)
-    st.session_state.min_confidence = value
-    st.session_state.min_confidence_input = value
+
+def sync_full_range_confidence_slider():
+    value = clamp_value(st.session_state.full_range_confidence_slider, 0.01, 0.99)
+    st.session_state.full_range_confidence = value
+    st.session_state.full_range_confidence_input = value
 
 
-def sync_confidence_input():
-    value = clamp_value(st.session_state.min_confidence_input, 0.01, 0.99)
-    st.session_state.min_confidence = value
-    st.session_state.min_confidence_slider = value
+def sync_full_range_confidence_input():
+    value = clamp_value(st.session_state.full_range_confidence_input, 0.01, 0.99)
+    st.session_state.full_range_confidence = value
+    st.session_state.full_range_confidence_slider = value
+
+
+def sync_short_range_confidence_slider():
+    value = clamp_value(st.session_state.short_range_confidence_slider, 0.01, 0.99)
+    st.session_state.short_range_confidence = value
+    st.session_state.short_range_confidence_input = value
+
+
+def sync_short_range_confidence_input():
+    value = clamp_value(st.session_state.short_range_confidence_input, 0.01, 0.99)
+    st.session_state.short_range_confidence = value
+    st.session_state.short_range_confidence_slider = value
 
 
 def sync_crop_scale_slider():
@@ -615,8 +645,10 @@ def linked_slider_number(
     input_callback,
     suffix="",
     help_text=None,
+    container=None,
 ):
-    slider_col, input_col = st.sidebar.columns([0.68, 0.32])
+    parent = container or st.sidebar
+    slider_col, input_col = parent.columns([0.68, 0.32])
     slider_value = {}
     input_value = {}
     if f"{state_name}_slider" not in st.session_state:
@@ -647,46 +679,73 @@ def linked_slider_number(
             help=help_text,
             **input_value,
         )
-    st.sidebar.caption(f"{label}: {st.session_state[state_name]:.2f}{suffix}")
+    parent.caption(f"{label}: {st.session_state[state_name]:.2f}{suffix}")
 
 
-linked_slider_number(
-    "Confidence threshold",
-    "min_confidence",
-    0.01,
-    0.99,
-    sync_confidence_slider,
-    sync_confidence_input,
-    help_text=(
-        "Controls how strict face detection is. Lower values can find smaller or harder faces, "
-        "but may add false detections. Higher values are cleaner but may miss faces."
+st.sidebar.selectbox(
+    "Detection range",
+    options=list(detection_range_labels.keys()),
+    key="detection_range",
+    format_func=lambda value: detection_range_labels[value],
+    help=(
+        "Balanced runs both full-range and short-range models, then merges duplicate boxes. "
+        "Full range is better for small distant faces. Short range is cleaner for close faces."
     ),
 )
-linked_slider_number(
-    "Crop expansion",
-    "crop_scale",
-    1.0,
-    5.0,
-    sync_crop_scale_slider,
-    sync_crop_scale_input,
-    "x",
-    help_text=(
-        "Controls how much the detected face is expanded into the final square crop. "
-        "Larger values include more hair, neck, shoulders, and background."
-    ),
-)
-linked_slider_number(
-    "Vertical offset",
-    "shoulder_bias",
-    -1.5,
-    1.5,
-    sync_shoulder_bias_slider,
-    sync_shoulder_bias_input,
-    help_text=(
-        "Controls vertical crop position. Negative values move the square crop upward, "
-        "0 keeps it centered, and positive values move it downward to include more shoulders."
-    ),
-)
+if st.session_state.detection_range in {"balanced", "full_range"}:
+    linked_slider_number(
+        "Full-range confidence",
+        "full_range_confidence",
+        0.01,
+        0.99,
+        sync_full_range_confidence_slider,
+        sync_full_range_confidence_input,
+        help_text=(
+            "Controls the full-range model. Lower this first when distant or small faces are missing. "
+            "Lower values may add face-like false positives."
+        ),
+    )
+if st.session_state.detection_range in {"balanced", "short_range"}:
+    linked_slider_number(
+        "Short-range confidence",
+        "short_range_confidence",
+        0.01,
+        0.99,
+        sync_short_range_confidence_slider,
+        sync_short_range_confidence_input,
+        help_text=(
+            "Controls the short-range model for close or large faces. Raise it if nearby faces create too many duplicates or false positives."
+        ),
+    )
+
+with st.sidebar.expander("Crop box tuning", expanded=False):
+    linked_slider_number(
+        "Crop expansion",
+        "crop_scale",
+        1.0,
+        5.0,
+        sync_crop_scale_slider,
+        sync_crop_scale_input,
+        "x",
+        help_text=(
+            "Controls how much the detected face is expanded into the final square crop. "
+            "Larger values include more hair, neck, shoulders, and background."
+        ),
+        container=st,
+    )
+    linked_slider_number(
+        "Vertical offset",
+        "shoulder_bias",
+        -1.5,
+        1.5,
+        sync_shoulder_bias_slider,
+        sync_shoulder_bias_input,
+        help_text=(
+            "Controls vertical crop position. Negative values move the square crop upward, "
+            "0 keeps it centered, and positive values move it downward to include more shoulders."
+        ),
+        container=st,
+    )
 
 
 def draw_detection_overlay(image_bytes, faces):
@@ -704,7 +763,7 @@ def draw_detection_overlay(image_bytes, faces):
         label = (
             f"Face {face['face_index']} | "
             f"crop x={x_min} y={y_min} w={int(bbox['width'])} h={int(bbox['height'])} | "
-            f"face {face_bbox['confidence']:.2f}"
+            f"face {face_bbox['confidence']:.2f} {face_bbox.get('model_range', '')}"
         )
 
         draw.rectangle((x_min, y_min, x_max, y_max), outline="#00E676", width=line_width)
@@ -846,7 +905,13 @@ with tab_workspace:
                         )
                     }
                     data = {
-                        "min_detection_confidence": st.session_state.min_confidence,
+                        "min_detection_confidence": min(
+                            st.session_state.full_range_confidence,
+                            st.session_state.short_range_confidence,
+                        ),
+                        "detection_range": st.session_state.detection_range,
+                        "full_range_confidence": st.session_state.full_range_confidence,
+                        "short_range_confidence": st.session_state.short_range_confidence,
                         "crop_scale": st.session_state.crop_scale,
                         "shoulder_bias": st.session_state.shoulder_bias,
                     }
@@ -872,17 +937,30 @@ with tab_workspace:
 
             detection_result = st.session_state.get("detection_result")
             if detection_result:
-                st.markdown(
-                    f"""
-                    <div class="metric-row">
-                        <div class="metric-pill">Task {detection_result['task_id'][:8]}</div>
-                        <div class="metric-pill">{detection_result['face_count']} detected</div>
-                        <div class="metric-pill">{detection_result['image_width']} x {detection_result['image_height']}</div>
-                        <div class="metric-pill">{detection_result['storage_provider']}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+                metric_items = [
+                    f"Task {detection_result['task_id'][:8]}",
+                    f"{detection_result['face_count']} detected",
+                    detection_range_labels.get(
+                        detection_result.get("detection_range"),
+                        detection_result.get("detection_range", "balanced"),
+                    ),
+                ]
+                if (
+                    detection_result.get("full_range_confidence") is not None
+                    and detection_result.get("short_range_confidence") is not None
+                ):
+                    metric_items.append(
+                        f"full {detection_result['full_range_confidence']:.2f} · "
+                        f"short {detection_result['short_range_confidence']:.2f}"
+                    )
+                metric_items.extend(
+                    [
+                        f"{detection_result['image_width']} x {detection_result['image_height']}",
+                        detection_result["storage_provider"],
+                    ]
                 )
+                metric_html = "".join(f'<div class="metric-pill">{escape(str(item))}</div>' for item in metric_items)
+                st.markdown(f'<div class="metric-row">{metric_html}</div>', unsafe_allow_html=True)
 
         with right_panel:
             st.markdown('<div class="panel-title">Detected Faces</div>', unsafe_allow_html=True)
@@ -920,7 +998,8 @@ with tab_workspace:
                         )
                         st.caption(
                             f"face x={face_bbox['x_min']} y={face_bbox['y_min']} "
-                            f"w={face_bbox['width']} h={face_bbox['height']}"
+                            f"w={face_bbox['width']} h={face_bbox['height']} "
+                            f"model={face_bbox.get('model_range', 'unknown')}"
                         )
                     st.markdown("</div>", unsafe_allow_html=True)
 

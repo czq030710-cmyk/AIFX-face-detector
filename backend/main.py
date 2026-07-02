@@ -16,7 +16,10 @@ from backend.supabase_client import SupabaseGateway, UserContext
 
 
 app = FastAPI(title="AIFX Phase 1 Face Processing API")
-detector = FaceDetector()
+DETECTORS = {
+    "short_range": FaceDetector(model_range="short_range"),
+    "full_range": FaceDetector(model_range="full_range"),
+}
 supabase_gateway = SupabaseGateway()
 
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
@@ -93,6 +96,9 @@ def list_tasks(
 async def detect_faces(
     file: UploadFile = File(...),
     min_detection_confidence: float = Form(0.23),
+    detection_range: str = Form("balanced"),
+    full_range_confidence: float | None = Form(None),
+    short_range_confidence: float | None = Form(None),
     crop_scale: float = Form(2.2),
     shoulder_bias: float = Form(0.2),
     user: UserContext = Depends(get_current_user),
@@ -101,6 +107,15 @@ async def detect_faces(
         raise HTTPException(status_code=400, detail="Only .jpg and .png images are supported.")
     if not 0.0 <= min_detection_confidence <= 1.0:
         raise HTTPException(status_code=400, detail="min_detection_confidence must be between 0.0 and 1.0.")
+    if full_range_confidence is not None and not 0.0 <= full_range_confidence <= 1.0:
+        raise HTTPException(status_code=400, detail="full_range_confidence must be between 0.0 and 1.0.")
+    if short_range_confidence is not None and not 0.0 <= short_range_confidence <= 1.0:
+        raise HTTPException(status_code=400, detail="short_range_confidence must be between 0.0 and 1.0.")
+    if detection_range not in {"short_range", "full_range", "balanced"}:
+        raise HTTPException(
+            status_code=400,
+            detail="detection_range must be short_range, full_range, or balanced.",
+        )
     if not 1.0 <= crop_scale <= 5.0:
         raise HTTPException(status_code=400, detail="crop_scale must be between 1.0 and 5.0.")
     if not -1.5 <= shoulder_bias <= 1.5:
@@ -131,8 +146,12 @@ async def detect_faces(
             file.content_type,
         )
 
-    detector.min_detection_confidence = min_detection_confidence
-    faces = detector.detect_faces(image)
+    detection_thresholds = resolve_detection_thresholds(
+        min_detection_confidence=min_detection_confidence,
+        full_range_confidence=full_range_confidence,
+        short_range_confidence=short_range_confidence,
+    )
+    faces = detect_faces_by_range(image, detection_range, detection_thresholds)
     detected_faces = []
     bounding_boxes = []
 
@@ -159,6 +178,7 @@ async def detect_faces(
             "width": width,
             "height": height,
             "confidence": face["score"],
+            "model_range": face["model_range"],
             "image_width": image.width,
             "image_height": image.height,
         }
@@ -207,6 +227,9 @@ async def detect_faces(
         "image_height": image.height,
         "settings": {
             "min_detection_confidence": min_detection_confidence,
+            "detection_range": detection_range,
+            "full_range_confidence": detection_thresholds["full_range"],
+            "short_range_confidence": detection_thresholds["short_range"],
             "crop_scale": crop_scale,
             "shoulder_bias": shoulder_bias,
         },
@@ -232,6 +255,9 @@ async def detect_faces(
         "cropped_image_urls": [],
         "bounding_boxes": bounding_boxes,
         "min_detection_confidence": min_detection_confidence,
+        "detection_range": detection_range,
+        "full_range_confidence": detection_thresholds["full_range"],
+        "short_range_confidence": detection_thresholds["short_range"],
         "crop_scale": crop_scale,
         "shoulder_bias": shoulder_bias,
         "image_width": image.width,
@@ -372,6 +398,32 @@ def preview_crop_base64(image: Image.Image, crop_bbox: dict) -> str:
     return b64encode(buffer.getvalue()).decode("ascii")
 
 
+def resolve_detection_thresholds(
+    min_detection_confidence: float,
+    full_range_confidence: float | None,
+    short_range_confidence: float | None,
+):
+    return {
+        "full_range": full_range_confidence if full_range_confidence is not None else min_detection_confidence,
+        "short_range": short_range_confidence if short_range_confidence is not None else min_detection_confidence,
+    }
+
+
+def detect_faces_by_range(image: Image.Image, detection_range: str, detection_thresholds: dict):
+    if detection_range == "balanced":
+        model_ranges = ("full_range", "short_range")
+    else:
+        model_ranges = (detection_range,)
+
+    faces = []
+    for model_range in model_ranges:
+        model_detector = DETECTORS[model_range]
+        model_detector.min_detection_confidence = detection_thresholds[model_range]
+        for face in model_detector.detect_faces(image):
+            faces.append({**face, "model_range": model_range})
+    return faces
+
+
 def save_pending_detection(record):
     pending_path = DETECTIONS_DIR / f"{record['task_id']}.json"
     pending_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -408,9 +460,7 @@ def read_local_history(limit):
 
 
 def filter_face_candidates(candidates):
-    crop_nms_iou_threshold = 0.10
-    low_confidence_floor = 0.30
-    enough_confident_faces = 3
+    face_nms_iou_threshold = 0.35
 
     candidates = sorted(
         candidates,
@@ -419,20 +469,9 @@ def filter_face_candidates(candidates):
     )
     kept = []
     for candidate in candidates:
-        crop_bbox = candidate["crop_bbox"]
-        if all(bbox_iou(crop_bbox, kept_candidate["crop_bbox"]) < crop_nms_iou_threshold for kept_candidate in kept):
+        face_bbox = candidate["face_bbox"]
+        if all(bbox_iou(face_bbox, kept_candidate["face_bbox"]) < face_nms_iou_threshold for kept_candidate in kept):
             kept.append(candidate)
-
-    confident_count = sum(
-        candidate["face_bbox"]["confidence"] >= low_confidence_floor
-        for candidate in kept
-    )
-    if confident_count >= enough_confident_faces:
-        kept = [
-            candidate
-            for candidate in kept
-            if candidate["face_bbox"]["confidence"] >= low_confidence_floor
-        ]
 
     return kept
 

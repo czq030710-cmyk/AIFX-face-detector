@@ -6,12 +6,13 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 
 - Face detection core is implemented in `core_ai/face_detector.py`.
 - The local detector uses official MediaPipe BlazeFace model files with OpenCV DNN inference for macOS stability.
-- The default model is `core_ai/models/blaze_face_full_range.tflite`, which performs better on full-body images where faces are small.
-- `core_ai/models/blaze_face_short_range.tflite` remains available as a fallback model.
+- The detection API can run `short_range`, `full_range`, or the default `balanced` mode that merges both official BlazeFace model outputs.
+- `balanced` mode is tuned for recall: it keeps low-confidence candidates and only removes obvious duplicate face boxes, so the user can manually choose the true faces before cropping.
 - FastAPI provides `/health`, `/detect-faces`, and `/crop-selected`.
 - Streamlit provides an AIFX Studio-style upload workspace with a detect-first, select-then-crop flow.
 - The workspace shows a three-step flow, clearer empty states, selectable face cards, and readable saved-output rows.
-- The Streamlit sidebar has linked slider-plus-number controls for confidence, crop expansion, and vertical crop offset.
+- The Streamlit sidebar has separate linked slider-plus-number controls for full-range and short-range confidence.
+- Crop expansion and vertical offset are hidden inside the `Crop box tuning` expander until portrait framing needs adjustment.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked before saving crops.
 - Green boxes show the proposed crop regions on the original image.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
@@ -125,16 +126,20 @@ Local demo mode:
 
 The frontend exposes controls for the main detection and crop parameters:
 
-- `Confidence threshold`
-- `Crop expansion`
-- `Vertical offset`
+- `Detection range`
+- `Full-range confidence`
+- `Short-range confidence`
+- `Crop expansion` under `Crop box tuning`
+- `Vertical offset` under `Crop box tuning`
 
 Each control pairs a slider with a precise number input. Changing either side updates the same value, so manual edits and slider movement stay in sync.
 Hover over a control label in the frontend to see a short explanation of what that parameter changes.
 
 Default recommended preset:
 
-- `Confidence threshold`: `0.23`
+- `Detection range`: `Balanced full + short`
+- `Full-range confidence`: `0.10`
+- `Short-range confidence`: `0.23`
 - `Crop expansion`: `2.20`
 - `Vertical offset`: `0.20`
 
@@ -142,15 +147,33 @@ The values are sent to `POST /detect-faces` as:
 
 ```text
 min_detection_confidence
+detection_range
+full_range_confidence
+short_range_confidence
 crop_scale
 shoulder_bias
 ```
 
-The tuning controls use `0.01` increments. Suggested confidence values:
+Detection range choices:
+
+- `Balanced full + short`: default. Runs both full-range and short-range BlazeFace models, merges the candidates, and removes only obvious duplicate face boxes. This is best when one photo has both close faces and distant small faces.
+- `Full range`: better for full-body images, group photos, and small distant faces. It may return more false positives.
+- `Short range`: cleaner for close-up faces and selfies, but can miss small faces in the background.
+
+For the current product goal, `Balanced full + short` is the recommended setting because it favors finding every possible face. False positives are acceptable because crops are saved only after manual selection.
+
+How to tune the two model thresholds:
+
+- Lower `Full-range confidence` first when small or distant faces are missing. This is the recall-first control for group photos and full-body images.
+- Lower `Short-range confidence` when close faces are still missing.
+- Raise `Short-range confidence` if large nearby faces create too many obvious false positives.
+- Keep `Balanced full + short` when the same image contains both near and far faces. Switch to only `Full range` or only `Short range` when debugging one model at a time.
+
+The confidence controls use `0.01` increments. Suggested values:
 
 - `0.5`: default, cleaner results for most images.
 - `0.3`: better recall for smaller faces.
-- `0.2`: useful for difficult images, but may introduce false positives.
+- `0.1` to `0.2`: useful for difficult images, but may introduce false positives.
 
 Lower values find more faces; higher values filter more aggressively.
 
@@ -161,14 +184,17 @@ Crop controls:
 
 Parameter meanings:
 
-- `min_detection_confidence`: how strict face detection is. Lower values improve recall; higher values reduce false positives.
+- `detection_range`: chooses `balanced`, `full_range`, or `short_range`.
+- `full_range_confidence`: how strict the full-range model is. Lower values improve recall for small distant faces.
+- `short_range_confidence`: how strict the short-range model is. Lower values improve recall for large close faces.
+- `min_detection_confidence`: legacy fallback used only if the model-specific confidence values are not provided.
 - `crop_scale`: how large the final square crop is around the detected face.
 - `shoulder_bias`: vertical crop offset. Negative values move the crop upward, `0` keeps it centered, and positive values move it downward to include more shoulders.
 
 The backend also applies a second filtering pass after the model returns candidate faces:
 
-- Overlapping final crop boxes are suppressed so repeated detections around the same person collapse to the best-scoring box.
-- If at least three confident faces are found, very low-confidence leftovers are dropped to reduce decorative false positives from face-like textures.
+- Duplicate model detections are suppressed using the smaller detected face boxes, not the expanded crop boxes.
+- Low-confidence candidates are kept so difficult or distant faces can still be reviewed manually.
 
 The API now runs in two stages:
 
@@ -198,6 +224,9 @@ Saved file naming:
 - `user_id`
 - `storage_provider`
 - `min_detection_confidence`
+- `detection_range`
+- `full_range_confidence`
+- `short_range_confidence`
 - `crop_scale`
 - `shoulder_bias`
 - `face_count`

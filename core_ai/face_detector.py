@@ -10,14 +10,20 @@ class FaceDetector:
         self,
         min_detection_confidence=0.5,
         model_path=None,
+        model_range="full_range",
         input_size=None,
     ):
         """初始化人脸检测器，使用 MediaPipe 官方 BlazeFace 模型。"""
         self.min_detection_confidence = min_detection_confidence
         models_dir = Path(__file__).with_name("models")
-        default_model_path = models_dir / "blaze_face_full_range.tflite"
-        if not default_model_path.exists():
-            default_model_path = models_dir / "blaze_face_short_range.tflite"
+        if model_path is None:
+            default_model_path = models_dir / f"blaze_face_{model_range}.tflite"
+            if not default_model_path.exists():
+                default_model_path = models_dir / "blaze_face_full_range.tflite"
+            if not default_model_path.exists():
+                default_model_path = models_dir / "blaze_face_short_range.tflite"
+        else:
+            default_model_path = model_path
         self.model_path = Path(model_path or default_model_path)
 
         if not self.model_path.exists():
