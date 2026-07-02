@@ -9,6 +9,9 @@ import streamlit as st
 
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+BEST_DETECTION_RANGE = "balanced"
+BEST_DETECTION_LABEL = "Balanced recall"
+BEST_SMALL_FACE_SCAN = True
 
 
 st.set_page_config(page_title="AIFX Face Processing", layout="wide")
@@ -79,36 +82,143 @@ st.markdown(
     .mode-pill.local {
         background: #FFD166;
     }
-    .login-shell {
-        min-height: 72vh;
-        display: flex;
+    .login-copy,
+    .login-panel {
+        position: relative;
+        z-index: 1;
+    }
+    .login-kicker {
+        display: inline-flex;
         align-items: center;
-        justify-content: center;
+        gap: 9px;
+        color: #C7D2FF;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.055);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        margin-bottom: 22px;
+        backdrop-filter: blur(18px);
     }
-    .login-card {
-        width: min(420px, 92vw);
-        border: 1px solid #2A2D35;
-        border-radius: 8px;
-        padding: 28px 28px 20px;
-        background: #151820;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+    .login-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #8BE9C5;
+        box-shadow: 0 0 22px rgba(139, 233, 197, 0.75);
     }
-    .login-brand {
-        color: #F7F8FA;
-        font-size: 1.75rem;
-        font-weight: 760;
-        margin-bottom: 6px;
+    .login-headline {
+        color: #FFFFFF;
+        font-size: clamp(3.2rem, 9vw, 7rem);
+        line-height: 0.92;
+        font-weight: 850;
+        letter-spacing: 0;
+        max-width: 780px;
+        text-wrap: balance;
+        animation: login-rise 780ms cubic-bezier(.2,.8,.2,1) both;
     }
-    .login-subtitle {
-        color: #A9AFBA;
+    .login-headline span {
+        display: inline-block;
+        background: linear-gradient(100deg, #FFFFFF 5%, #B8D6FF 34%, #FF6BCE 70%, #6EE7FF 98%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        animation: login-sheen 7s ease-in-out infinite alternate;
+        background-size: 180% 100%;
+    }
+    .login-lede {
+        margin-top: 22px;
+        max-width: 650px;
+        color: #AAB2C2;
+        font-size: 1.08rem;
+        line-height: 1.65;
+        text-wrap: pretty;
+        animation: login-rise 780ms cubic-bezier(.2,.8,.2,1) 120ms both;
+    }
+    .login-feature-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 26px;
+        animation: login-rise 780ms cubic-bezier(.2,.8,.2,1) 220ms both;
+    }
+    .login-feature {
+        border: 1px solid rgba(255,255,255,0.12);
+        color: #D8DFEC;
+        background: rgba(255,255,255,0.06);
+        border-radius: 999px;
+        padding: 9px 12px;
+        font-size: 0.83rem;
+        font-weight: 720;
+        backdrop-filter: blur(16px);
+    }
+    .login-panel {
+        border: 1px solid rgba(255,255,255,0.16);
+        border-radius: 18px;
+        padding: 24px;
+        background:
+            linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.055)),
+            rgba(15, 17, 25, 0.72);
+        box-shadow: 0 32px 110px rgba(0,0,0,0.48);
+        backdrop-filter: blur(30px) saturate(1.2);
+        animation: login-panel-in 860ms cubic-bezier(.2,.8,.2,1) both;
+    }
+    .login-backdrop {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+            radial-gradient(circle at 18% 16%, rgba(67, 128, 255, 0.28), transparent 28%),
+            radial-gradient(circle at 82% 76%, rgba(255, 81, 196, 0.22), transparent 32%),
+            radial-gradient(circle at 58% 18%, rgba(92, 229, 255, 0.12), transparent 28%);
+        z-index: 0;
+    }
+    .login-panel-title {
+        color: #FFFFFF;
+        font-size: 1.35rem;
+        font-weight: 820;
+        margin-bottom: 5px;
+    }
+    .login-panel-copy {
+        color: #9FA8B8;
         line-height: 1.45;
-        margin-bottom: 18px;
+        margin-bottom: 16px;
     }
-    .login-note {
-        color: #8D94A1;
-        font-size: 0.86rem;
-        line-height: 1.45;
+    .login-security {
         margin-top: 14px;
+        border-top: 1px solid rgba(255,255,255,0.10);
+        padding-top: 14px;
+        color: #939BAA;
+        font-size: 0.84rem;
+        line-height: 1.45;
+    }
+    div[data-testid="stTextInput"] input {
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(255,255,255,0.92);
+    }
+    div[data-testid="stTextInput"] input:focus {
+        border-color: rgba(110,168,255,0.75);
+        box-shadow: 0 0 0 3px rgba(110,168,255,0.20);
+    }
+    @keyframes login-drift {
+        from { transform: translate3d(0, 0, 0) scale(1); }
+        to { transform: translate3d(34px, 24px, 0) scale(1.08); }
+    }
+    @keyframes login-rise {
+        from { opacity: 0; transform: translateY(18px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes login-panel-in {
+        from { opacity: 0; transform: translateY(20px) scale(0.985); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes login-sheen {
+        from { background-position: 0% 50%; }
+        to { background-position: 100% 50%; }
     }
     .stApp {
         background:
@@ -379,6 +489,9 @@ st.markdown(
         font-size: 0.84rem;
     }
     @media (max-width: 900px) {
+        .login-panel {
+            padding: 18px;
+        }
         .studio-nav {
             align-items: flex-start;
             flex-direction: column;
@@ -393,6 +506,15 @@ st.markdown(
         }
         .flow-strip {
             grid-template-columns: 1fr;
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .login-headline,
+        .login-headline span,
+        .login-lede,
+        .login-feature-row,
+        .login-panel {
+            animation: none;
         }
     }
     </style>
@@ -477,15 +599,37 @@ def handle_request_error(exc, location, action):
 
 
 def render_login_page():
-    st.write("")
-    st.write("")
-    left, middle, right = st.columns([1, 0.9, 1])
-    with middle:
+    st.markdown(
+        """
+        <div class="login-backdrop"></div>
+        """,
+        unsafe_allow_html=True,
+    )
+    intro_col, form_col = st.columns([0.62, 0.38], gap="large")
+    with intro_col:
         st.markdown(
             """
-            <div class="login-card">
-                <div class="login-brand">AIFX Face Processing</div>
-                <div class="login-subtitle">Sign in to upload images, crop faces, and keep your task history private in Supabase.</div>
+            <section class="login-copy">
+                <div class="login-kicker"><span class="login-dot"></span> Private AI face workspace</div>
+                <div class="login-headline">AIFX <span>Studio</span></div>
+                <div class="login-lede">
+                    Sign in to detect every candidate face, review crop regions, and keep each output tied to your private task history.
+                </div>
+                <div class="login-feature-row">
+                    <div class="login-feature">Recall-first detection</div>
+                    <div class="login-feature">Selectable crops</div>
+                    <div class="login-feature">Supabase history</div>
+                </div>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+    with form_col:
+        st.markdown(
+            """
+            <div class="login-panel">
+                <div class="login-panel-title">Welcome back</div>
+                <div class="login-panel-copy">Use your AIFX account to continue. New users can create an account from this panel.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -497,7 +641,14 @@ def render_login_page():
             st.info(st.session_state.pop("auth_notice"))
         if st.button(auth_mode, type="primary", use_container_width=True):
             submit_auth(auth_mode, email, password, st)
-        st.caption("Use a test password. This is an app user account, not your Supabase admin login.")
+        st.markdown(
+            """
+            <div class="login-security">
+                Use an app account, not your Supabase admin login. Your browser keeps the session while the app is running.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 api_config = load_api_config()
@@ -578,14 +729,6 @@ init_control_state("full_range_confidence", 0.10, 0.01, 0.99)
 init_control_state("short_range_confidence", 0.23, 0.01, 0.99)
 init_control_state("crop_scale", 2.2, 1.0, 5.0)
 init_control_state("shoulder_bias", 0.2, -1.5, 1.5)
-
-detection_range_labels = {
-    "balanced": "Balanced full + short",
-    "full_range": "Full range",
-    "short_range": "Short range",
-}
-if st.session_state.get("detection_range") not in detection_range_labels:
-    st.session_state.detection_range = "balanced"
 
 
 def sync_full_range_confidence_slider():
@@ -682,41 +825,40 @@ def linked_slider_number(
     parent.caption(f"{label}: {st.session_state[state_name]:.2f}{suffix}")
 
 
-st.sidebar.selectbox(
-    "Detection range",
-    options=list(detection_range_labels.keys()),
-    key="detection_range",
-    format_func=lambda value: detection_range_labels[value],
-    help=(
-        "Balanced runs both full-range and short-range models, then merges duplicate boxes. "
-        "Full range is better for small distant faces. Short range is cleaner for close faces."
+st.sidebar.markdown(
+    f"""
+    <div class="account-panel">
+        <div class="account-kicker">Detection strategy</div>
+        <div class="account-title">{BEST_DETECTION_LABEL}</div>
+        <div class="account-copy">Runs the best recall-first pipeline automatically, including small-face scanning for distant group photos.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+linked_slider_number(
+    "Distant-face sensitivity",
+    "full_range_confidence",
+    0.01,
+    0.99,
+    sync_full_range_confidence_slider,
+    sync_full_range_confidence_input,
+    help_text=(
+        "Lower this when small or far-away faces are missing. "
+        "Lower values may add more false positives."
     ),
 )
-if st.session_state.detection_range in {"balanced", "full_range"}:
-    linked_slider_number(
-        "Full-range confidence",
-        "full_range_confidence",
-        0.01,
-        0.99,
-        sync_full_range_confidence_slider,
-        sync_full_range_confidence_input,
-        help_text=(
-            "Controls the full-range model. Lower this first when distant or small faces are missing. "
-            "Lower values may add face-like false positives."
-        ),
-    )
-if st.session_state.detection_range in {"balanced", "short_range"}:
-    linked_slider_number(
-        "Short-range confidence",
-        "short_range_confidence",
-        0.01,
-        0.99,
-        sync_short_range_confidence_slider,
-        sync_short_range_confidence_input,
-        help_text=(
-            "Controls the short-range model for close or large faces. Raise it if nearby faces create too many duplicates or false positives."
-        ),
-    )
+linked_slider_number(
+    "Close-face sensitivity",
+    "short_range_confidence",
+    0.01,
+    0.99,
+    sync_short_range_confidence_slider,
+    sync_short_range_confidence_input,
+    help_text=(
+        "Lower this when large close faces are missing. "
+        "Raise it if the result has too many obvious false positives."
+    ),
+)
 
 with st.sidebar.expander("Crop box tuning", expanded=False):
     linked_slider_number(
@@ -909,9 +1051,10 @@ with tab_workspace:
                             st.session_state.full_range_confidence,
                             st.session_state.short_range_confidence,
                         ),
-                        "detection_range": st.session_state.detection_range,
+                        "detection_range": BEST_DETECTION_RANGE,
                         "full_range_confidence": st.session_state.full_range_confidence,
                         "short_range_confidence": st.session_state.short_range_confidence,
+                        "small_face_scan": BEST_SMALL_FACE_SCAN,
                         "crop_scale": st.session_state.crop_scale,
                         "shoulder_bias": st.session_state.shoulder_bias,
                     }
@@ -940,10 +1083,7 @@ with tab_workspace:
                 metric_items = [
                     f"Task {detection_result['task_id'][:8]}",
                     f"{detection_result['face_count']} detected",
-                    detection_range_labels.get(
-                        detection_result.get("detection_range"),
-                        detection_result.get("detection_range", "balanced"),
-                    ),
+                    BEST_DETECTION_LABEL,
                 ]
                 if (
                     detection_result.get("full_range_confidence") is not None
@@ -955,6 +1095,7 @@ with tab_workspace:
                     )
                 metric_items.extend(
                     [
+                        "small scan on" if detection_result.get("small_face_scan") else "small scan off",
                         f"{detection_result['image_width']} x {detection_result['image_height']}",
                         detection_result["storage_provider"],
                     ]

@@ -99,6 +99,7 @@ async def detect_faces(
     detection_range: str = Form("balanced"),
     full_range_confidence: float | None = Form(None),
     short_range_confidence: float | None = Form(None),
+    small_face_scan: bool = Form(True),
     crop_scale: float = Form(2.2),
     shoulder_bias: float = Form(0.2),
     user: UserContext = Depends(get_current_user),
@@ -151,7 +152,7 @@ async def detect_faces(
         full_range_confidence=full_range_confidence,
         short_range_confidence=short_range_confidence,
     )
-    faces = detect_faces_by_range(image, detection_range, detection_thresholds)
+    faces = detect_faces_by_range(image, detection_range, detection_thresholds, small_face_scan)
     detected_faces = []
     bounding_boxes = []
 
@@ -230,6 +231,7 @@ async def detect_faces(
             "detection_range": detection_range,
             "full_range_confidence": detection_thresholds["full_range"],
             "short_range_confidence": detection_thresholds["short_range"],
+            "small_face_scan": small_face_scan,
             "crop_scale": crop_scale,
             "shoulder_bias": shoulder_bias,
         },
@@ -258,6 +260,7 @@ async def detect_faces(
         "detection_range": detection_range,
         "full_range_confidence": detection_thresholds["full_range"],
         "short_range_confidence": detection_thresholds["short_range"],
+        "small_face_scan": small_face_scan,
         "crop_scale": crop_scale,
         "shoulder_bias": shoulder_bias,
         "image_width": image.width,
@@ -409,7 +412,12 @@ def resolve_detection_thresholds(
     }
 
 
-def detect_faces_by_range(image: Image.Image, detection_range: str, detection_thresholds: dict):
+def detect_faces_by_range(
+    image: Image.Image,
+    detection_range: str,
+    detection_thresholds: dict,
+    small_face_scan: bool = False,
+):
     if detection_range == "balanced":
         model_ranges = ("full_range", "short_range")
     else:
@@ -421,7 +429,48 @@ def detect_faces_by_range(image: Image.Image, detection_range: str, detection_th
         model_detector.min_detection_confidence = detection_thresholds[model_range]
         for face in model_detector.detect_faces(image):
             faces.append({**face, "model_range": model_range})
+    if small_face_scan:
+        faces.extend(detect_small_faces_by_tiles(image, min(detection_thresholds.values())))
     return faces
+
+
+def detect_small_faces_by_tiles(image: Image.Image, threshold: float):
+    image_width, image_height = image.size
+    min_side = min(image_width, image_height)
+    if min_side < 256:
+        return []
+
+    tile_size = min(min_side, max(256, min(640, int(min_side * 0.5))))
+    step = max(96, tile_size // 2)
+    x_positions = tile_positions(image_width, tile_size, step)
+    y_positions = tile_positions(image_height, tile_size, step)
+
+    model_detector = DETECTORS["short_range"]
+    model_detector.min_detection_confidence = threshold
+    faces = []
+    for y_offset in y_positions:
+        for x_offset in x_positions:
+            tile = image.crop((x_offset, y_offset, x_offset + tile_size, y_offset + tile_size))
+            for face in model_detector.detect_faces(tile):
+                faces.append(
+                    {
+                        **face,
+                        "x": face["x"] + x_offset,
+                        "y": face["y"] + y_offset,
+                        "model_range": "small_face_scan",
+                    }
+                )
+    return faces
+
+
+def tile_positions(length: int, tile_size: int, step: int):
+    if length <= tile_size:
+        return [0]
+    positions = list(range(0, length - tile_size + 1, step))
+    final_position = length - tile_size
+    if positions[-1] != final_position:
+        positions.append(final_position)
+    return positions
 
 
 def save_pending_detection(record):
