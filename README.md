@@ -9,7 +9,8 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - The default model is `core_ai/models/blaze_face_full_range.tflite`, which performs better on full-body images where faces are small.
 - `core_ai/models/blaze_face_short_range.tflite` remains available as a fallback model.
 - FastAPI provides `/health`, `/detect-faces`, and `/crop-selected`.
-- Streamlit provides a local upload workspace with a detect-first, select-then-crop flow.
+- Streamlit provides an AIFX Studio-style upload workspace with a detect-first, select-then-crop flow.
+- The workspace shows a three-step flow, clearer empty states, selectable face cards, and readable saved-output rows.
 - The Streamlit sidebar has linked slider-plus-number controls for confidence, crop expansion, and vertical crop offset.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked before saving crops.
 - Green boxes show the proposed crop regions on the original image.

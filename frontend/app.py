@@ -1,11 +1,11 @@
 import os
 import base64
+from html import escape
 from io import BytesIO
 
 from PIL import Image, ImageDraw
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
@@ -15,9 +15,18 @@ st.set_page_config(page_title="AIFX Face Processing", layout="wide")
 st.markdown(
     """
     <style>
+    :root {
+        color-scheme: dark;
+    }
+    html {
+        color-scheme: dark;
+    }
+    body {
+        overflow-x: hidden;
+    }
     [data-testid="stSidebar"] {
-        background: #111318;
-        border-right: 1px solid #2A2D35;
+        background: #0B0D13;
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
     }
     [data-testid="stSidebar"] h2,
     [data-testid="stSidebar"] h3,
@@ -94,23 +103,60 @@ st.markdown(
     }
     .stApp {
         background:
-            radial-gradient(circle at 50% 8%, rgba(102, 69, 255, 0.18), transparent 34%),
-            radial-gradient(circle at 8% 90%, rgba(24, 169, 255, 0.14), transparent 30%),
+            radial-gradient(circle at 52% 4%, rgba(98, 58, 220, 0.22), transparent 32%),
+            radial-gradient(circle at 10% 86%, rgba(15, 142, 199, 0.16), transparent 34%),
+            linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)),
             #07080D;
         color: #F7F8FA;
     }
+    .block-container {
+        max-width: 1420px;
+        padding-top: 1.2rem;
+        padding-bottom: 3rem;
+    }
+    div[data-testid="stTabs"] button {
+        color: #A4AAB7;
+        font-weight: 760;
+    }
+    div[data-testid="stTabs"] button[aria-selected="true"] {
+        color: #FF4B62;
+    }
+    div[data-testid="stButton"] button {
+        border-radius: 8px;
+        min-height: 46px;
+        font-weight: 800;
+        letter-spacing: 1.8px;
+        text-transform: uppercase;
+        transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+    div[data-testid="stButton"] button:hover {
+        transform: translateY(-1px);
+    }
+    div[data-testid="stButton"] button:focus-visible,
+    div[data-testid="stFileUploader"] section:focus-within {
+        outline: 2px solid #6EA8FF;
+        outline-offset: 2px;
+    }
+    div[data-testid="stFileUploader"] section {
+        border-radius: 8px;
+        border: 1px dashed rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.05);
+    }
+    div[data-testid="stAlert"] {
+        border-radius: 8px;
+    }
     .studio-nav {
-        margin: 18px auto 26px;
-        max-width: 1320px;
-        min-height: 64px;
+        margin: 10px auto 22px;
+        min-height: 66px;
         border: 1px solid rgba(255, 255, 255, 0.10);
         border-radius: 8px;
-        background: rgba(8, 9, 14, 0.86);
+        background: rgba(8, 9, 14, 0.90);
         box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
         display: flex;
         align-items: center;
         justify-content: space-between;
         padding: 0 22px;
+        gap: 18px;
     }
     .brand-mark {
         display: flex;
@@ -118,8 +164,9 @@ st.markdown(
         gap: 14px;
         color: #FFFFFF;
         font-weight: 780;
-        letter-spacing: 6px;
+        letter-spacing: 5px;
         font-size: 1.05rem;
+        min-width: 0;
     }
     .brand-orb {
         width: 34px;
@@ -127,15 +174,31 @@ st.markdown(
         border-radius: 50%;
         background: linear-gradient(135deg, #3D7BFF, #E84CCB);
         border: 2px solid rgba(255, 255, 255, 0.72);
+        flex: 0 0 auto;
     }
-    .nav-links {
+    .nav-status {
         display: flex;
-        gap: 38px;
-        color: #777B86;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: #A9B2C2;
         font-size: 0.82rem;
         font-weight: 780;
-        letter-spacing: 4px;
         text-transform: uppercase;
+        min-width: 0;
+        flex-wrap: wrap;
+    }
+    .nav-chip {
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 8px;
+        padding: 7px 10px;
+        background: rgba(255,255,255,0.045);
+        white-space: nowrap;
+    }
+    .nav-chip.hot {
+        color: #FFFFFF;
+        border-color: rgba(95, 140, 255, 0.42);
+        background: rgba(62, 111, 255, 0.18);
     }
     .nav-user {
         color: #DDE3EF;
@@ -144,6 +207,7 @@ st.markdown(
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        text-align: right;
     }
     .studio-kicker {
         color: #8A7DFF;
@@ -155,11 +219,12 @@ st.markdown(
     }
     .studio-title {
         color: #FFFFFF;
-        font-size: 2.1rem;
+        font-size: clamp(2rem, 5vw, 4.1rem);
         line-height: 1.05;
         font-weight: 820;
         letter-spacing: 0;
         margin-bottom: 6px;
+        text-wrap: balance;
     }
     .studio-title span {
         background: linear-gradient(90deg, #FF4DB8, #4EA2FF, #18D8FF);
@@ -171,13 +236,85 @@ st.markdown(
         color: #9EA4B1;
         font-size: 1rem;
         margin-bottom: 16px;
+        max-width: 760px;
+        text-wrap: pretty;
     }
-    .panel {
+    .flow-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin: 16px 0 18px;
+    }
+    .flow-step {
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 8px;
+        padding: 12px;
+        background: rgba(255,255,255,0.035);
+        min-width: 0;
+    }
+    .flow-step.active {
+        border-color: rgba(255, 75, 98, 0.58);
+        background: linear-gradient(135deg, rgba(255,75,98,0.18), rgba(62,111,255,0.08));
+    }
+    .flow-num {
+        color: #FF4B62;
+        font-size: 0.72rem;
+        font-weight: 840;
+        letter-spacing: 2px;
+        margin-bottom: 5px;
+    }
+    .flow-label {
+        color: #FFFFFF;
+        font-weight: 780;
+        font-size: 0.95rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .flow-copy {
+        color: #9299A8;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        margin-top: 4px;
+    }
+    .panel,
+    .empty-panel {
         border: 1px solid rgba(255, 255, 255, 0.09);
         border-radius: 8px;
         background: rgba(9, 10, 16, 0.88);
         padding: 22px;
         box-shadow: 0 20px 55px rgba(0, 0, 0, 0.34);
+    }
+    .empty-panel {
+        min-height: 340px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        border-style: dashed;
+    }
+    .empty-icon {
+        width: 54px;
+        height: 54px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        color: #FFFFFF;
+        font-size: 1.55rem;
+        background: linear-gradient(135deg, #426CFF, #DA4BE8);
+        margin-bottom: 16px;
+    }
+    .empty-title {
+        color: #FFFFFF;
+        font-weight: 790;
+        font-size: 1.2rem;
+        margin-bottom: 7px;
+    }
+    .empty-copy {
+        color: #9EA4B1;
+        max-width: 460px;
+        line-height: 1.45;
     }
     .panel-title {
         color: #F4F6FA;
@@ -200,6 +337,7 @@ st.markdown(
         color: #C7CEDB;
         background: rgba(255,255,255,0.04);
         font-size: 0.82rem;
+        font-variant-numeric: tabular-nums;
     }
     .face-card {
         border: 1px solid rgba(255, 255, 255, 0.09);
@@ -207,6 +345,11 @@ st.markdown(
         padding: 12px;
         background: rgba(0, 0, 0, 0.32);
         margin-bottom: 10px;
+        transition: border-color 160ms ease, background-color 160ms ease;
+    }
+    .face-card:hover {
+        border-color: rgba(110, 168, 255, 0.35);
+        background: rgba(255,255,255,0.045);
     }
     .face-card strong {
         color: #FFFFFF;
@@ -215,6 +358,33 @@ st.markdown(
     .muted {
         color: #9399A6;
         font-size: 0.86rem;
+    }
+    .output-line {
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px;
+        padding: 9px 10px;
+        margin: 6px 0;
+        background: rgba(255,255,255,0.035);
+        color: #C9D1DF;
+        overflow-wrap: anywhere;
+        font-size: 0.84rem;
+    }
+    @media (max-width: 900px) {
+        .studio-nav {
+            align-items: flex-start;
+            flex-direction: column;
+            padding: 16px;
+        }
+        .nav-status {
+            justify-content: flex-start;
+        }
+        .nav-user {
+            max-width: 100%;
+            text-align: left;
+        }
+        .flow-strip {
+            grid-template-columns: 1fr;
+        }
     }
     </style>
     """,
@@ -333,12 +503,17 @@ if supabase_enabled and not st.session_state.get("auth_token"):
     st.stop()
 
 current_user = st.session_state.get("auth_user") or {}
-nav_user = current_user.get("email") or "Local workspace"
+nav_user = escape(current_user.get("email") or "Local workspace")
+provider_label = escape(str(api_config.get("storage_provider", "unknown")).upper())
 st.markdown(
     f"""
     <div class="studio-nav">
         <div class="brand-mark"><div class="brand-orb"></div><div>AIFX</div></div>
-        <div class="nav-links"><span>News</span><span>Featured</span><span>Products</span><span>InsDawg</span><span>Crew</span></div>
+        <div class="nav-status">
+            <span class="nav-chip hot">Face Crop Studio</span>
+            <span class="nav-chip">Detect → Select → Save</span>
+            <span class="nav-chip">{provider_label}</span>
+        </div>
         <div class="nav-user">{nav_user}</div>
     </div>
     """,
@@ -388,8 +563,6 @@ def clamp_value(value, minimum, maximum):
 def init_control_state(name, default, minimum, maximum):
     value = clamp_value(st.session_state.get(name, default), minimum, maximum)
     st.session_state[name] = value
-    st.session_state.setdefault(f"{name}_slider", value)
-    st.session_state.setdefault(f"{name}_input", value)
 
 
 init_control_state("min_confidence", 0.23, 0.01, 0.99)
@@ -444,29 +617,35 @@ def linked_slider_number(
     help_text=None,
 ):
     slider_col, input_col = st.sidebar.columns([0.68, 0.32])
+    slider_value = {}
+    input_value = {}
+    if f"{state_name}_slider" not in st.session_state:
+        slider_value["value"] = st.session_state[state_name]
+    if f"{state_name}_input" not in st.session_state:
+        input_value["value"] = st.session_state[state_name]
     with slider_col:
         st.slider(
             label,
             min_value=minimum,
             max_value=maximum,
-            value=st.session_state[state_name],
             step=0.01,
             key=f"{state_name}_slider",
             on_change=slider_callback,
             help=help_text,
+            **slider_value,
         )
     with input_col:
         st.number_input(
             "Exact value",
             min_value=minimum,
             max_value=maximum,
-            value=st.session_state[state_name],
             step=0.01,
             format="%.2f",
             key=f"{state_name}_input",
             on_change=input_callback,
             label_visibility="collapsed",
             help=help_text,
+            **input_value,
         )
     st.sidebar.caption(f"{label}: {st.session_state[state_name]:.2f}{suffix}")
 
@@ -545,6 +724,11 @@ def reset_detection_state():
     st.session_state.pop("detection_result", None)
     st.session_state.pop("uploaded_image_bytes", None)
     st.session_state.pop("uploaded_filename", None)
+    st.session_state.pop("crop_result", None)
+    st.session_state.pop("select_all_faces", None)
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("select_face_"):
+            st.session_state.pop(key, None)
 
 
 def selected_face_indices(faces):
@@ -555,6 +739,38 @@ def selected_face_indices(faces):
     ]
 
 
+def workspace_stage(uploaded_file):
+    if uploaded_file is None:
+        return "upload"
+    if st.session_state.get("crop_result"):
+        return "output"
+    if st.session_state.get("detection_result"):
+        return "select"
+    return "detect"
+
+
+def render_flow(stage):
+    steps = [
+        ("upload", "01", "Upload Image", "Choose a JPG or PNG from your workspace."),
+        ("detect", "02", "Detect Faces", "Find every candidate before saving crops."),
+        ("select", "03", "Select & Crop", "Save only the faces you choose."),
+    ]
+    order = {"upload": 0, "detect": 1, "select": 2, "output": 2}
+    active_index = order.get(stage, 0)
+    html = ['<div class="flow-strip">']
+    for index, (key, number, label, copy) in enumerate(steps):
+        class_name = "flow-step active" if index == active_index else "flow-step"
+        html.append(
+            f'<div class="{class_name}">'
+            f'<div class="flow-num">{number}</div>'
+            f'<div class="flow-label">{label}</div>'
+            f'<div class="flow-copy">{copy}</div>'
+            "</div>"
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
 tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
 
 with tab_workspace:
@@ -562,17 +778,45 @@ with tab_workspace:
         """
         <div class="studio-kicker">SUPADAWG · MULTI-FACE RECOGNITION V2.0</div>
         <div class="studio-title">AIFX <span>Studio</span></div>
-        <div class="studio-subtitle">Detect every candidate face first, then choose exactly which faces become saved crop outputs.</div>
+        <div class="studio-subtitle">Detect every candidate face first, review the crop regions, then save only the faces you select.</div>
         """,
         unsafe_allow_html=True,
     )
     upload_col, action_col = st.columns([0.72, 0.28])
     with upload_col:
-        uploaded_file = st.file_uploader("Change image", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
+        uploaded_file = st.file_uploader("Upload Or Change Image", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
     with action_col:
         if st.button("Clear workspace", use_container_width=True):
             reset_detection_state()
             st.rerun()
+
+    render_flow(workspace_stage(uploaded_file))
+
+    if uploaded_file is None:
+        empty_left, empty_right = st.columns([0.62, 0.38], gap="large")
+        with empty_left:
+            st.markdown(
+                """
+                <div class="empty-panel">
+                    <div class="empty-icon">+</div>
+                    <div class="empty-title">Start With A Group Photo</div>
+                    <div class="empty-copy">Upload a JPG or PNG. The app will show candidate faces before creating any crop files.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with empty_right:
+            st.markdown(
+                """
+                <div class="panel">
+                    <div class="panel-title">What Happens Next</div>
+                    <div class="flow-copy">1. Detect all candidate faces in the image.</div>
+                    <div class="flow-copy">2. Review each face preview and crop coordinates.</div>
+                    <div class="flow-copy">3. Select one or more faces and save only those crops.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     if uploaded_file is not None:
         image_bytes = uploaded_file.getvalue()
@@ -591,8 +835,9 @@ with tab_workspace:
             else:
                 st.image(image_bytes, caption="Original image", width="stretch")
 
-            if st.button("Detect All Faces", type="primary", use_container_width=True):
-                with st.spinner("Detecting candidate faces..."):
+            detect_label = "Run Detection Again" if detection_result else "Detect All Faces"
+            if st.button(detect_label, type="primary", use_container_width=True):
+                with st.spinner("Detecting candidate faces…"):
                     files = {
                         "file": (
                             uploaded_file.name,
@@ -618,6 +863,8 @@ with tab_workspace:
                         handle_request_error(exc, st, "Detection request")
                     else:
                         st.session_state.detection_result = response.json()
+                        st.session_state.pop("crop_result", None)
+                        st.session_state.pop("select_all_faces", None)
                         for key in list(st.session_state.keys()):
                             if str(key).startswith("select_face_"):
                                 st.session_state.pop(key, None)
@@ -641,12 +888,12 @@ with tab_workspace:
             st.markdown('<div class="panel-title">Detected Faces</div>', unsafe_allow_html=True)
             detection_result = st.session_state.get("detection_result")
             if not detection_result:
-                st.info("Upload an image and run detection. Face candidates will appear here before any crop files are saved.")
+                st.info("Run detection to review face candidates. No crop files are saved at this stage.")
             elif not detection_result.get("faces"):
                 st.warning("No faces detected. Try lowering the confidence threshold or increasing crop expansion.")
             else:
                 faces = detection_result["faces"]
-                select_all = st.checkbox("Select all detected faces", value=False)
+                select_all = st.checkbox("Select all detected faces", key="select_all_faces")
                 if select_all:
                     for face in faces:
                         st.session_state[f"select_face_{face['face_index']}"] = True
@@ -678,9 +925,16 @@ with tab_workspace:
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 selected_indices = selected_face_indices(faces)
-                st.caption(f"{len(selected_indices)} selected for output.")
-                if st.button("Start the Magic", type="primary", use_container_width=True, disabled=not selected_indices):
-                    with st.spinner("Cropping and saving selected faces..."):
+                selected_count = len(selected_indices)
+                st.caption(f"{selected_count} selected for output.")
+                if selected_count == 0:
+                    crop_button_label = "Select Faces To Save"
+                elif selected_count == 1:
+                    crop_button_label = "Save 1 Selected Crop"
+                else:
+                    crop_button_label = f"Save {selected_count} Selected Crops"
+                if st.button(crop_button_label, type="primary", use_container_width=True, disabled=not selected_indices):
+                    with st.spinner("Cropping and saving selected faces…"):
                         try:
                             response = requests.post(
                                 f"{API_URL}/crop-selected",
@@ -698,17 +952,18 @@ with tab_workspace:
                             crop_result = response.json()
                             st.session_state.crop_result = crop_result
                             st.success(crop_result["message"])
-                            st.json(
-                                {
-                                    "task_id": crop_result["task_id"],
-                                    "selected_face_indices": selected_indices,
-                                    "cropped_image_urls": crop_result["cropped_image_urls"],
-                                }
-                            )
                 if st.session_state.get("crop_result"):
                     st.markdown('<div class="panel-title">Saved Output</div>', unsafe_allow_html=True)
                     for face in st.session_state.crop_result.get("faces", []):
-                        st.caption(f"{face['filename']} · {absolute_url(face['url'])}")
+                        st.markdown(
+                            f"""
+                            <div class="output-line">
+                                <strong>{escape(face['filename'])}</strong><br>
+                                {escape(absolute_url(face['url']))}
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
 with tab_history:
     try:
