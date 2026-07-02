@@ -8,13 +8,13 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - The local detector uses official MediaPipe BlazeFace model files with OpenCV DNN inference for macOS stability.
 - The default model is `core_ai/models/blaze_face_full_range.tflite`, which performs better on full-body images where faces are small.
 - `core_ai/models/blaze_face_short_range.tflite` remains available as a fallback model.
-- FastAPI provides `/health` and `/detect-faces`.
-- Streamlit provides a local upload workspace.
+- FastAPI provides `/health`, `/detect-faces`, and `/crop-selected`.
+- Streamlit provides a local upload workspace with a detect-first, select-then-crop flow.
 - The Streamlit sidebar has linked slider-plus-number controls for confidence, crop expansion, and vertical crop offset.
-- Detection results are drawn back onto the full original image so crop locations can be visually checked.
-- Green boxes show the saved crop region on the original image.
+- Detection results are drawn back onto the full original image so crop locations can be visually checked before saving crops.
+- Green boxes show the proposed crop regions on the original image.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
-- Cropped face files are saved for later backend/Supabase use, but the frontend keeps them hidden and shows only metadata plus saved URLs.
+- Cropped face files are saved only after the user selects one or more detected faces and starts the crop step.
 - Day 3 auth/storage/history flow is implemented.
 - If Supabase credentials are configured, the app uses Supabase Auth, Storage, and the `task_history` table with per-user history.
 - If Supabase credentials are configured, users must log in before using the workspace.
@@ -108,7 +108,8 @@ When all three Supabase keys are set, the backend enables cloud accounts:
 
 - `/auth/signup` creates users through Supabase Auth.
 - `/auth/login` returns a Bearer token used by the frontend.
-- `/detect-faces` requires login, uploads original/crop images to Supabase Storage, and writes a `task_history` row.
+- `/detect-faces` requires login, uploads the original image, detects candidate faces, and returns selectable crop previews.
+- `/crop-selected` requires login, saves only the selected crop images, and writes a `task_history` row.
 - `/tasks` requires login and returns the latest 10 tasks for that user's Supabase history.
 
 When Supabase is configured, the frontend shows a login-first page. After login, the same browser session stays signed in while the app is running.
@@ -168,7 +169,12 @@ The backend also applies a second filtering pass after the model returns candida
 - Overlapping final crop boxes are suppressed so repeated detections around the same person collapse to the best-scoring box.
 - If at least three confident faces are found, very low-confidence leftovers are dropped to reduce decorative false positives from face-like textures.
 
-The API stores the expanded crop image under `storage/crops/`, while the response keeps both coordinate sets:
+The API now runs in two stages:
+
+1. `POST /detect-faces` stores the original image, detects all candidate faces, and returns preview crops plus coordinates. It does not save crop files or write final history.
+2. `POST /crop-selected` receives a `task_id` and selected `face_index` values, then saves only those crop files and writes the final task history row.
+
+The API stores selected expanded crop images under `storage/crops/`, while the response keeps both coordinate sets:
 
 - `face_bbox`: the smaller model-detected face region.
 - `crop_bbox`: the expanded region actually saved as the cropped image.
@@ -176,7 +182,7 @@ The API stores the expanded crop image under `storage/crops/`, while the respons
 Saved file naming:
 
 - Uploaded `abc.png` is stored locally as `storage/originals/abc-original-<task8>.png`.
-- Crops from that image are stored locally as `storage/crops/abc-crops-01-<task8>.png`, `abc-crops-02-<task8>.png`, and so on.
+- Selected crops from that image are stored locally as `storage/crops/abc-crops-01-<task8>.png`, `abc-crops-02-<task8>.png`, and so on.
 - Supabase Storage uses the same filenames under `{user_id}/{task_id}/originals/` and `{user_id}/{task_id}/crops/`.
 - The short task id suffix prevents repeated uploads with the same original filename from overwriting each other.
 
@@ -186,7 +192,7 @@ Saved file naming:
 
 - `task_id`
 - `original_image_url`
-- `cropped_image_urls`
+- `cropped_image_urls` as an empty list during detection
 - `bounding_boxes`
 - `user_id`
 - `storage_provider`
@@ -195,6 +201,17 @@ Saved file naming:
 - `shoulder_bias`
 - `face_count`
 - `faces`
+
+`POST /crop-selected` accepts:
+
+```json
+{
+  "task_id": "detection-task-id",
+  "selected_face_indices": [0, 2]
+}
+```
+
+It returns the saved crop URLs and writes the completed task to history.
 
 Bounding boxes are stored in original image pixel coordinates. Each face includes both the detected face box and the expanded crop box:
 
@@ -227,7 +244,7 @@ Implemented:
 
 - Supabase Auth endpoints: `POST /auth/signup`, `POST /auth/login`.
 - Auth-aware detection: Supabase mode uses Bearer token user identity; local demo mode uses a local user id.
-- Supabase Storage upload path: `{user_id}/{task_id}/originals/{source}-original-{task8}.*` and `{user_id}/{task_id}/crops/{source}-crops-01-{task8}.png`.
+- Supabase Storage upload path: `{user_id}/{task_id}/originals/{source}-original-{task8}.*` after detection and `{user_id}/{task_id}/crops/{source}-crops-01-{task8}.png` after selected crop output.
 - Task history persistence: Supabase `task_history` table or local `storage/task_history.json`.
 - Login-first frontend session controls and latest-10 history tab.
 - Database/storage schema in `database/schema.sql`.

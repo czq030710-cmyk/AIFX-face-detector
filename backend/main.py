@@ -22,8 +22,9 @@ supabase_gateway = SupabaseGateway()
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 ORIGINALS_DIR = STORAGE_DIR / "originals"
 CROPS_DIR = STORAGE_DIR / "crops"
+DETECTIONS_DIR = STORAGE_DIR / "detections"
 LOCAL_HISTORY_PATH = STORAGE_DIR / "task_history.json"
-for directory in (ORIGINALS_DIR, CROPS_DIR):
+for directory in (ORIGINALS_DIR, CROPS_DIR, DETECTIONS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 app.mount("/storage", StaticFiles(directory=STORAGE_DIR), name="storage")
@@ -32,6 +33,11 @@ app.mount("/storage", StaticFiles(directory=STORAGE_DIR), name="storage")
 class AuthCredentials(BaseModel):
     email: str
     password: str
+
+
+class CropSelectionRequest(BaseModel):
+    task_id: str
+    selected_face_indices: list[int]
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> UserContext:
@@ -127,8 +133,7 @@ async def detect_faces(
 
     detector.min_detection_confidence = min_detection_confidence
     faces = detector.detect_faces(image)
-    cropped_faces = []
-    cropped_image_urls = []
+    detected_faces = []
     bounding_boxes = []
 
     face_candidates = []
@@ -171,6 +176,116 @@ async def detect_faces(
         crop_bbox = candidate["crop_bbox"]
         face_bbox = {**candidate["face_bbox"], "face_index": face_index}
         face_bbox.pop("detected_index", None)
+        bounding_box = {
+            "face_index": face_index,
+            "face_bbox": face_bbox,
+            "crop_bbox": crop_bbox,
+        }
+        bounding_boxes.append(bounding_box)
+        detected_faces.append(
+            {
+                "face_index": face_index,
+                "bbox": crop_bbox,
+                "face_bbox": face_bbox,
+                "crop_bbox": crop_bbox,
+                "preview_base64": preview_crop_base64(image, crop_bbox),
+            }
+        )
+
+    pending_detection = {
+        "task_id": task_id,
+        "filename": file.filename,
+        "source_stem": source_stem,
+        "short_task_id": short_task_id,
+        "original_filename": original_filename,
+        "original_path": str(original_path),
+        "original_image_url": original_image_url,
+        "original_content_type": file.content_type,
+        "user_id": user.user_id,
+        "storage_provider": storage_provider,
+        "image_width": image.width,
+        "image_height": image.height,
+        "settings": {
+            "min_detection_confidence": min_detection_confidence,
+            "crop_scale": crop_scale,
+            "shoulder_bias": shoulder_bias,
+        },
+        "faces": [
+            {
+                "face_index": face["face_index"],
+                "face_bbox": face["face_bbox"],
+                "crop_bbox": face["crop_bbox"],
+            }
+            for face in detected_faces
+        ],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_pending_detection(pending_detection)
+
+    response_payload = {
+        "task_id": task_id,
+        "status": "detected",
+        "filename": file.filename,
+        "user_id": user.user_id,
+        "storage_provider": storage_provider,
+        "original_image_url": original_image_url,
+        "cropped_image_urls": [],
+        "bounding_boxes": bounding_boxes,
+        "min_detection_confidence": min_detection_confidence,
+        "crop_scale": crop_scale,
+        "shoulder_bias": shoulder_bias,
+        "image_width": image.width,
+        "image_height": image.height,
+        "face_count": len(detected_faces),
+        "faces": detected_faces,
+        "message": "No faces detected." if not detected_faces else "Faces detected. Select faces to crop.",
+    }
+    return response_payload
+
+
+@app.post("/crop-selected")
+def crop_selected_faces(
+    selection: CropSelectionRequest,
+    user: UserContext = Depends(get_current_user),
+):
+    pending_detection = read_pending_detection(selection.task_id)
+    if pending_detection["user_id"] != user.user_id:
+        raise HTTPException(status_code=403, detail="This detection task belongs to another user.")
+
+    selected_indices = []
+    for face_index in selection.selected_face_indices:
+        if face_index not in selected_indices:
+            selected_indices.append(face_index)
+    if not selected_indices:
+        raise HTTPException(status_code=400, detail="Select at least one face to crop.")
+
+    faces_by_index = {
+        face["face_index"]: face
+        for face in pending_detection.get("faces", [])
+    }
+    missing_indices = [
+        face_index
+        for face_index in selected_indices
+        if face_index not in faces_by_index
+    ]
+    if missing_indices:
+        raise HTTPException(status_code=400, detail=f"Unknown face index: {missing_indices}")
+
+    original_path = Path(pending_detection["original_path"])
+    if not original_path.exists():
+        raise HTTPException(status_code=404, detail="Original image for this detection is no longer available.")
+
+    image = Image.open(original_path).convert("RGB")
+    task_id = pending_detection["task_id"]
+    source_stem = pending_detection["source_stem"]
+    short_task_id = pending_detection["short_task_id"]
+    cropped_faces = []
+    cropped_image_urls = []
+    bounding_boxes = []
+
+    for output_index, face_index in enumerate(selected_indices, start=1):
+        face = faces_by_index[face_index]
+        crop_bbox = face["crop_bbox"]
         crop = image.crop(
             (
                 crop_bbox["x_min"],
@@ -183,7 +298,7 @@ async def detect_faces(
         buffer = BytesIO()
         crop.save(buffer, format="PNG")
         crop_bytes = buffer.getvalue()
-        crop_filename = f"{source_stem}-crops-{face_index + 1:02d}-{short_task_id}.png"
+        crop_filename = f"{source_stem}-crops-{output_index:02d}-{short_task_id}.png"
         crop_path = CROPS_DIR / crop_filename
         crop_path.write_bytes(crop_bytes)
 
@@ -195,62 +310,81 @@ async def detect_faces(
                 "image/png",
             )
         cropped_image_urls.append(crop_url)
+
         bounding_box = {
             "face_index": face_index,
-            "face_bbox": face_bbox,
+            "output_index": output_index,
+            "face_bbox": face["face_bbox"],
             "crop_bbox": crop_bbox,
         }
         bounding_boxes.append(bounding_box)
         cropped_faces.append(
             {
                 "face_index": face_index,
+                "output_index": output_index,
                 "filename": crop_filename,
                 "url": crop_url,
                 "bbox": crop_bbox,
-                "face_bbox": face_bbox,
+                "face_bbox": face["face_bbox"],
                 "crop_bbox": crop_bbox,
                 "preview_base64": b64encode(crop_bytes).decode("ascii"),
             }
         )
 
-    response_payload = {
-        "task_id": task_id,
-        "status": "completed",
-        "filename": file.filename,
-        "user_id": user.user_id,
-        "storage_provider": storage_provider,
-        "original_image_url": original_image_url,
-        "cropped_image_urls": cropped_image_urls,
-        "bounding_boxes": bounding_boxes,
-        "min_detection_confidence": min_detection_confidence,
-        "crop_scale": crop_scale,
-        "shoulder_bias": shoulder_bias,
-        "image_width": image.width,
-        "image_height": image.height,
-        "face_count": len(cropped_faces),
-        "faces": cropped_faces,
-        "message": "No faces detected." if not cropped_faces else "Faces detected.",
-    }
     task_record = {
         "task_id": task_id,
         "user_id": user.user_id,
-        "filename": file.filename,
+        "filename": pending_detection["filename"],
         "status": "completed",
-        "original_image_url": original_image_url,
+        "original_image_url": pending_detection["original_image_url"],
         "cropped_image_urls": cropped_image_urls,
         "bounding_boxes": bounding_boxes,
         "face_count": len(cropped_faces),
-        "image_width": image.width,
-        "image_height": image.height,
+        "image_width": pending_detection["image_width"],
+        "image_height": pending_detection["image_height"],
         "settings": {
-            "min_detection_confidence": min_detection_confidence,
-            "crop_scale": crop_scale,
-            "shoulder_bias": shoulder_bias,
+            **pending_detection["settings"],
+            "selected_face_indices": selected_indices,
+            "detected_face_count": len(pending_detection.get("faces", [])),
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     save_task_history(task_record)
-    return response_payload
+    return {
+        **task_record,
+        "storage_provider": pending_detection["storage_provider"],
+        "faces": cropped_faces,
+        "message": f"Cropped {len(cropped_faces)} selected face(s).",
+    }
+
+
+def preview_crop_base64(image: Image.Image, crop_bbox: dict) -> str:
+    crop = image.crop(
+        (
+            crop_bbox["x_min"],
+            crop_bbox["y_min"],
+            crop_bbox["x_min"] + crop_bbox["width"],
+            crop_bbox["y_min"] + crop_bbox["height"],
+        )
+    )
+    buffer = BytesIO()
+    crop.save(buffer, format="PNG")
+    return b64encode(buffer.getvalue()).decode("ascii")
+
+
+def save_pending_detection(record):
+    pending_path = DETECTIONS_DIR / f"{record['task_id']}.json"
+    pending_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
+def read_pending_detection(task_id: str):
+    pending_path = DETECTIONS_DIR / f"{task_id}.json"
+    if not pending_path.exists():
+        raise HTTPException(status_code=404, detail="Detection task not found. Run face detection again.")
+    try:
+        return json.loads(pending_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Detection task metadata is corrupted.") from exc
 
 
 def save_task_history(record):

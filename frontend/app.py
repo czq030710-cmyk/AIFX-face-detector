@@ -1,4 +1,5 @@
 import os
+import base64
 from io import BytesIO
 
 from PIL import Image, ImageDraw
@@ -91,6 +92,130 @@ st.markdown(
         line-height: 1.45;
         margin-top: 14px;
     }
+    .stApp {
+        background:
+            radial-gradient(circle at 50% 8%, rgba(102, 69, 255, 0.18), transparent 34%),
+            radial-gradient(circle at 8% 90%, rgba(24, 169, 255, 0.14), transparent 30%),
+            #07080D;
+        color: #F7F8FA;
+    }
+    .studio-nav {
+        margin: 18px auto 26px;
+        max-width: 1320px;
+        min-height: 64px;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 8px;
+        background: rgba(8, 9, 14, 0.86);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 22px;
+    }
+    .brand-mark {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        color: #FFFFFF;
+        font-weight: 780;
+        letter-spacing: 6px;
+        font-size: 1.05rem;
+    }
+    .brand-orb {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #3D7BFF, #E84CCB);
+        border: 2px solid rgba(255, 255, 255, 0.72);
+    }
+    .nav-links {
+        display: flex;
+        gap: 38px;
+        color: #777B86;
+        font-size: 0.82rem;
+        font-weight: 780;
+        letter-spacing: 4px;
+        text-transform: uppercase;
+    }
+    .nav-user {
+        color: #DDE3EF;
+        font-weight: 700;
+        max-width: 260px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .studio-kicker {
+        color: #8A7DFF;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 6px;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+    }
+    .studio-title {
+        color: #FFFFFF;
+        font-size: 2.1rem;
+        line-height: 1.05;
+        font-weight: 820;
+        letter-spacing: 0;
+        margin-bottom: 6px;
+    }
+    .studio-title span {
+        background: linear-gradient(90deg, #FF4DB8, #4EA2FF, #18D8FF);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+    }
+    .studio-subtitle {
+        color: #9EA4B1;
+        font-size: 1rem;
+        margin-bottom: 16px;
+    }
+    .panel {
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 8px;
+        background: rgba(9, 10, 16, 0.88);
+        padding: 22px;
+        box-shadow: 0 20px 55px rgba(0, 0, 0, 0.34);
+    }
+    .panel-title {
+        color: #F4F6FA;
+        font-size: 0.88rem;
+        font-weight: 800;
+        letter-spacing: 6px;
+        text-transform: uppercase;
+        margin-bottom: 14px;
+    }
+    .metric-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 10px 0 16px;
+    }
+    .metric-pill {
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 8px;
+        padding: 8px 10px;
+        color: #C7CEDB;
+        background: rgba(255,255,255,0.04);
+        font-size: 0.82rem;
+    }
+    .face-card {
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 8px;
+        padding: 12px;
+        background: rgba(0, 0, 0, 0.32);
+        margin-bottom: 10px;
+    }
+    .face-card strong {
+        color: #FFFFFF;
+        letter-spacing: 1px;
+    }
+    .muted {
+        color: #9399A6;
+        font-size: 0.86rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -162,6 +287,16 @@ def submit_auth(auth_mode, email, password, location):
             location.info(auth_payload.get("message", "Account created. Login may require email confirmation."))
 
 
+def handle_request_error(exc, location, action):
+    message = str(exc)
+    if "401" in message or "Unauthorized" in message:
+        st.session_state.pop("auth_token", None)
+        st.session_state.pop("auth_user", None)
+        st.session_state.auth_notice = "Your login expired. Please sign in again, then continue."
+        st.rerun()
+    location.error(f"{action} failed: {exc}")
+
+
 def render_login_page():
     st.write("")
     st.write("")
@@ -179,6 +314,8 @@ def render_login_page():
         auth_mode = st.radio("Account action", ["Login", "Sign up"], horizontal=True, label_visibility="collapsed")
         email = st.text_input("Email", placeholder="you@example.com")
         password = st.text_input("Password", type="password", placeholder="Password")
+        if st.session_state.get("auth_notice"):
+            st.info(st.session_state.pop("auth_notice"))
         if st.button(auth_mode, type="primary", use_container_width=True):
             submit_auth(auth_mode, email, password, st)
         st.caption("Use a test password. This is an app user account, not your Supabase admin login.")
@@ -195,7 +332,18 @@ if supabase_enabled and not st.session_state.get("auth_token"):
     render_login_page()
     st.stop()
 
-st.title("AIFX Face Processing")
+current_user = st.session_state.get("auth_user") or {}
+nav_user = current_user.get("email") or "Local workspace"
+st.markdown(
+    f"""
+    <div class="studio-nav">
+        <div class="brand-mark"><div class="brand-orb"></div><div>AIFX</div></div>
+        <div class="nav-links"><span>News</span><span>Featured</span><span>Products</span><span>InsDawg</span><span>Crew</span></div>
+        <div class="nav-user">{nav_user}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.sidebar.header("Session")
 if supabase_enabled:
@@ -393,78 +541,181 @@ def draw_detection_overlay(image_bytes, faces):
 
     return image
 
+def reset_detection_state():
+    st.session_state.pop("detection_result", None)
+    st.session_state.pop("uploaded_image_bytes", None)
+    st.session_state.pop("uploaded_filename", None)
+
+
+def selected_face_indices(faces):
+    return [
+        face["face_index"]
+        for face in faces
+        if st.session_state.get(f"select_face_{face['face_index']}", False)
+    ]
+
+
 tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
 
 with tab_workspace:
-    uploaded_file = st.file_uploader("Upload a JPG or PNG image", type=["jpg", "jpeg", "png"])
+    st.markdown(
+        """
+        <div class="studio-kicker">SUPADAWG · MULTI-FACE RECOGNITION V2.0</div>
+        <div class="studio-title">AIFX <span>Studio</span></div>
+        <div class="studio-subtitle">Detect every candidate face first, then choose exactly which faces become saved crop outputs.</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    upload_col, action_col = st.columns([0.72, 0.28])
+    with upload_col:
+        uploaded_file = st.file_uploader("Change image", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
+    with action_col:
+        if st.button("Clear workspace", use_container_width=True):
+            reset_detection_state()
+            st.rerun()
 
     if uploaded_file is not None:
         image_bytes = uploaded_file.getvalue()
-        st.image(image_bytes, caption="Original image", width="stretch")
+        if st.session_state.get("uploaded_filename") != uploaded_file.name:
+            reset_detection_state()
+            st.session_state.uploaded_filename = uploaded_file.name
+        st.session_state.uploaded_image_bytes = image_bytes
 
-        if st.button("Detect faces", type="primary"):
-            with st.spinner("Detecting faces..."):
-                files = {
-                    "file": (
-                        uploaded_file.name,
-                        image_bytes,
-                        uploaded_file.type or "application/octet-stream",
-                    )
-                }
-                data = {
-                    "min_detection_confidence": st.session_state.min_confidence,
-                    "crop_scale": st.session_state.crop_scale,
-                    "shoulder_bias": st.session_state.shoulder_bias,
-                }
-                try:
-                    response = requests.post(
-                        f"{API_URL}/detect-faces",
-                        files=files,
-                        data=data,
-                        headers=auth_headers(),
-                        timeout=60,
-                    )
-                    response.raise_for_status()
-                except requests.RequestException as exc:
-                    st.error(f"Detection request failed: {exc}")
-                else:
-                    result = response.json()
-                    st.success(result["message"])
-                    st.json(
-                        {
-                            "task_id": result["task_id"],
-                            "filename": result["filename"],
-                            "user_id": result["user_id"],
-                            "storage_provider": result["storage_provider"],
-                            "original_image_url": result["original_image_url"],
-                            "cropped_image_urls": result["cropped_image_urls"],
-                            "min_detection_confidence": result["min_detection_confidence"],
-                            "crop_scale": result["crop_scale"],
-                            "shoulder_bias": result["shoulder_bias"],
-                            "image_width": result["image_width"],
-                            "image_height": result["image_height"],
-                            "face_count": result["face_count"],
-                        }
-                    )
+        left_panel, right_panel = st.columns([0.62, 0.38], gap="large")
+        with left_panel:
+            st.markdown('<div class="panel-title">Image Workspace</div>', unsafe_allow_html=True)
+            detection_result = st.session_state.get("detection_result")
+            if detection_result and detection_result.get("faces"):
+                overlay = draw_detection_overlay(image_bytes, detection_result["faces"])
+                st.image(overlay, caption="Detected crop regions on the original image", width="stretch")
+            else:
+                st.image(image_bytes, caption="Original image", width="stretch")
 
-                    if result["faces"]:
-                        overlay = draw_detection_overlay(image_bytes, result["faces"])
-                        st.subheader("Detected locations on original image")
-                        st.image(overlay, caption="Green boxes show the regions used for cropping.", width="stretch")
+            if st.button("Detect All Faces", type="primary", use_container_width=True):
+                with st.spinner("Detecting candidate faces..."):
+                    files = {
+                        "file": (
+                            uploaded_file.name,
+                            image_bytes,
+                            uploaded_file.type or "application/octet-stream",
+                        )
+                    }
+                    data = {
+                        "min_detection_confidence": st.session_state.min_confidence,
+                        "crop_scale": st.session_state.crop_scale,
+                        "shoulder_bias": st.session_state.shoulder_bias,
+                    }
+                    try:
+                        response = requests.post(
+                            f"{API_URL}/detect-faces",
+                            files=files,
+                            data=data,
+                            headers=auth_headers(),
+                            timeout=60,
+                        )
+                        response.raise_for_status()
+                    except requests.RequestException as exc:
+                        handle_request_error(exc, st, "Detection request")
+                    else:
+                        st.session_state.detection_result = response.json()
+                        for key in list(st.session_state.keys()):
+                            if str(key).startswith("select_face_"):
+                                st.session_state.pop(key, None)
+                        st.rerun()
 
-                        st.subheader("Detection metadata")
-                        st.caption("Cropped face files are saved locally, but hidden here to keep the workspace focused.")
-                        for face in result["faces"]:
-                            with st.expander(f"Face {face['face_index']} metadata", expanded=True):
-                                st.json({"face_bbox": face["face_bbox"], "crop_bbox": face["crop_bbox"]})
-                                st.caption(f"Saved crop URL: {absolute_url(face['url'])}")
+            detection_result = st.session_state.get("detection_result")
+            if detection_result:
+                st.markdown(
+                    f"""
+                    <div class="metric-row">
+                        <div class="metric-pill">Task {detection_result['task_id'][:8]}</div>
+                        <div class="metric-pill">{detection_result['face_count']} detected</div>
+                        <div class="metric-pill">{detection_result['image_width']} x {detection_result['image_height']}</div>
+                        <div class="metric-pill">{detection_result['storage_provider']}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        with right_panel:
+            st.markdown('<div class="panel-title">Detected Faces</div>', unsafe_allow_html=True)
+            detection_result = st.session_state.get("detection_result")
+            if not detection_result:
+                st.info("Upload an image and run detection. Face candidates will appear here before any crop files are saved.")
+            elif not detection_result.get("faces"):
+                st.warning("No faces detected. Try lowering the confidence threshold or increasing crop expansion.")
+            else:
+                faces = detection_result["faces"]
+                select_all = st.checkbox("Select all detected faces", value=False)
+                if select_all:
+                    for face in faces:
+                        st.session_state[f"select_face_{face['face_index']}"] = True
+
+                for face in faces:
+                    face_bbox = face["face_bbox"]
+                    crop_bbox = face["crop_bbox"]
+                    st.markdown('<div class="face-card">', unsafe_allow_html=True)
+                    preview_col, detail_col = st.columns([0.28, 0.72])
+                    with preview_col:
+                        st.image(
+                            BytesIO(base64.b64decode(face["preview_base64"])),
+                            caption=f"ID {face['face_index']}",
+                            width="stretch",
+                        )
+                    with detail_col:
+                        st.checkbox(
+                            f"Face {face['face_index']} · confidence {face_bbox['confidence']:.2f}",
+                            key=f"select_face_{face['face_index']}",
+                        )
+                        st.caption(
+                            f"crop x={crop_bbox['x_min']} y={crop_bbox['y_min']} "
+                            f"w={crop_bbox['width']} h={crop_bbox['height']}"
+                        )
+                        st.caption(
+                            f"face x={face_bbox['x_min']} y={face_bbox['y_min']} "
+                            f"w={face_bbox['width']} h={face_bbox['height']}"
+                        )
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                selected_indices = selected_face_indices(faces)
+                st.caption(f"{len(selected_indices)} selected for output.")
+                if st.button("Start the Magic", type="primary", use_container_width=True, disabled=not selected_indices):
+                    with st.spinner("Cropping and saving selected faces..."):
+                        try:
+                            response = requests.post(
+                                f"{API_URL}/crop-selected",
+                                json={
+                                    "task_id": detection_result["task_id"],
+                                    "selected_face_indices": selected_indices,
+                                },
+                                headers=auth_headers(),
+                                timeout=60,
+                            )
+                            response.raise_for_status()
+                        except requests.RequestException as exc:
+                            handle_request_error(exc, st, "Crop request")
+                        else:
+                            crop_result = response.json()
+                            st.session_state.crop_result = crop_result
+                            st.success(crop_result["message"])
+                            st.json(
+                                {
+                                    "task_id": crop_result["task_id"],
+                                    "selected_face_indices": selected_indices,
+                                    "cropped_image_urls": crop_result["cropped_image_urls"],
+                                }
+                            )
+                if st.session_state.get("crop_result"):
+                    st.markdown('<div class="panel-title">Saved Output</div>', unsafe_allow_html=True)
+                    for face in st.session_state.crop_result.get("faces", []):
+                        st.caption(f"{face['filename']} · {absolute_url(face['url'])}")
 
 with tab_history:
     try:
         response = requests.get(f"{API_URL}/tasks?limit=10", headers=auth_headers(), timeout=20)
         response.raise_for_status()
     except requests.RequestException as exc:
-        st.error(f"Could not load task history: {exc}")
+        handle_request_error(exc, st, "Could not load task history")
     else:
         history = response.json()
         tasks = history.get("tasks", [])
