@@ -20,6 +20,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - If Supabase credentials are configured, users must log in before using the workspace.
 - If Supabase credentials are missing, the app stays usable in local demo mode and writes task history to `storage/task_history.json`.
 - The task history view shows the latest 10 tasks for the current logged-in user.
+- Saved original and crop filenames keep the uploaded image name plus a short task id, for example `abc-original-a1b2c3d4.png` and `abc-crops-01-a1b2c3d4.png`.
 - Docker and final QA are next.
 
 ## Working Agreement
@@ -172,6 +173,13 @@ The API stores the expanded crop image under `storage/crops/`, while the respons
 - `face_bbox`: the smaller model-detected face region.
 - `crop_bbox`: the expanded region actually saved as the cropped image.
 
+Saved file naming:
+
+- Uploaded `abc.png` is stored locally as `storage/originals/abc-original-<task8>.png`.
+- Crops from that image are stored locally as `storage/crops/abc-crops-01-<task8>.png`, `abc-crops-02-<task8>.png`, and so on.
+- Supabase Storage uses the same filenames under `{user_id}/{task_id}/originals/` and `{user_id}/{task_id}/crops/`.
+- The short task id suffix prevents repeated uploads with the same original filename from overwriting each other.
+
 ## API Response Shape
 
 `POST /detect-faces` returns:
@@ -219,7 +227,7 @@ Implemented:
 
 - Supabase Auth endpoints: `POST /auth/signup`, `POST /auth/login`.
 - Auth-aware detection: Supabase mode uses Bearer token user identity; local demo mode uses a local user id.
-- Supabase Storage upload path: `{user_id}/{task_id}/original.*` and `{user_id}/{task_id}/crops/*.png`.
+- Supabase Storage upload path: `{user_id}/{task_id}/originals/{source}-original-{task8}.*` and `{user_id}/{task_id}/crops/{source}-crops-01-{task8}.png`.
 - Task history persistence: Supabase `task_history` table or local `storage/task_history.json`.
 - Login-first frontend session controls and latest-10 history tab.
 - Database/storage schema in `database/schema.sql`.

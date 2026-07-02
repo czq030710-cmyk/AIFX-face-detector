@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -35,6 +36,12 @@ class AuthCredentials(BaseModel):
 
 def get_current_user(authorization: str | None = Header(default=None)) -> UserContext:
     return supabase_gateway.get_user_from_authorization(authorization)
+
+
+def safe_filename_stem(filename: str | None) -> str:
+    stem = Path(filename or "upload").stem
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")
+    return (stem or "upload")[:80]
 
 
 @app.get("/health")
@@ -100,8 +107,10 @@ async def detect_faces(
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.") from exc
 
     task_id = str(uuid4())
+    short_task_id = task_id.split("-")[0]
+    source_stem = safe_filename_stem(file.filename)
     original_extension = ".jpg" if file.content_type == "image/jpeg" else ".png"
-    original_filename = f"{task_id}_original{original_extension}"
+    original_filename = f"{source_stem}-original-{short_task_id}{original_extension}"
     original_path = ORIGINALS_DIR / original_filename
     original_buffer = BytesIO()
     image.save(original_buffer, format="JPEG" if original_extension == ".jpg" else "PNG")
@@ -111,7 +120,7 @@ async def detect_faces(
     storage_provider = "supabase" if supabase_gateway.enabled else "local"
     if supabase_gateway.enabled:
         original_image_url = supabase_gateway.upload_bytes(
-            f"{user.user_id}/{task_id}/original{original_extension}",
+            f"{user.user_id}/{task_id}/originals/{original_filename}",
             original_bytes,
             file.content_type,
         )
@@ -174,7 +183,7 @@ async def detect_faces(
         buffer = BytesIO()
         crop.save(buffer, format="PNG")
         crop_bytes = buffer.getvalue()
-        crop_filename = f"{task_id}_face_{face_index}.png"
+        crop_filename = f"{source_stem}-crops-{face_index + 1:02d}-{short_task_id}.png"
         crop_path = CROPS_DIR / crop_filename
         crop_path.write_bytes(crop_bytes)
 
