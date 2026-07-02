@@ -429,9 +429,22 @@ def detect_faces_by_range(
         model_detector.min_detection_confidence = detection_thresholds[model_range]
         for face in model_detector.detect_faces(image):
             faces.append({**face, "model_range": model_range})
-    if small_face_scan:
-        faces.extend(detect_small_faces_by_tiles(image, min(detection_thresholds.values())))
+    if small_face_scan and should_run_small_face_scan(image, faces):
+        tile_threshold = max(min(detection_thresholds.values()), 0.10)
+        faces.extend(detect_small_faces_by_tiles(image, tile_threshold))
     return faces
+
+
+def should_run_small_face_scan(image: Image.Image, base_faces):
+    image_width, image_height = image.size
+    min_side = min(image_width, image_height)
+    if min_side < 256:
+        return False
+    if not base_faces:
+        return True
+
+    largest_face_ratio = max(max(face["width"], face["height"]) / min_side for face in base_faces)
+    return largest_face_ratio < 0.18
 
 
 def detect_small_faces_by_tiles(image: Image.Image, threshold: float):
@@ -510,6 +523,7 @@ def read_local_history(limit):
 
 def filter_face_candidates(candidates):
     face_nms_iou_threshold = 0.35
+    crop_nms_iou_threshold = 0.18
 
     candidates = sorted(
         candidates,
@@ -518,11 +532,30 @@ def filter_face_candidates(candidates):
     )
     kept = []
     for candidate in candidates:
-        face_bbox = candidate["face_bbox"]
-        if all(bbox_iou(face_bbox, kept_candidate["face_bbox"]) < face_nms_iou_threshold for kept_candidate in kept):
+        if all(
+            not candidate_overlaps_kept(
+                candidate,
+                kept_candidate,
+                face_nms_iou_threshold,
+                crop_nms_iou_threshold,
+            )
+            for kept_candidate in kept
+        ):
             kept.append(candidate)
 
     return kept
+
+
+def candidate_overlaps_kept(candidate, kept_candidate, face_iou_threshold, crop_iou_threshold):
+    if bbox_iou(candidate["face_bbox"], kept_candidate["face_bbox"]) >= face_iou_threshold:
+        return True
+
+    candidate_model = candidate["face_bbox"].get("model_range")
+    kept_model = kept_candidate["face_bbox"].get("model_range")
+    if "small_face_scan" in {candidate_model, kept_model}:
+        return False
+
+    return bbox_iou(candidate["crop_bbox"], kept_candidate["crop_bbox"]) >= crop_iou_threshold
 
 
 def bbox_iou(box_a, box_b):

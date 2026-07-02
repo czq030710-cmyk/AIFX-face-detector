@@ -7,12 +7,12 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Face detection core is implemented in `core_ai/face_detector.py`.
 - The local detector uses official MediaPipe BlazeFace model files with OpenCV DNN inference for macOS stability.
 - The detection API supports `short_range`, `full_range`, and `balanced`, while the frontend automatically uses the best recall-first `balanced` strategy.
-- `balanced` mode with small-face scanning keeps low-confidence candidates and only removes obvious duplicate face boxes, so the user can manually choose the true faces before cropping.
+- `balanced` mode keeps useful lower-confidence candidates and removes obvious duplicate face or crop regions, so the user can manually choose the true faces before cropping.
 - FastAPI provides `/health`, `/detect-faces`, and `/crop-selected`.
 - Streamlit provides an AIFX Studio-style upload workspace with a detect-first, select-then-crop flow.
 - The workspace shows a three-step flow, clearer empty states, selectable face cards, and readable saved-output rows.
 - The Streamlit sidebar has separate linked slider-plus-number controls for distant-face and close-face sensitivity.
-- Small-face scanning is always enabled by the frontend for full-body or distant group photos where faces are tiny after whole-image resizing.
+- Small-face scanning is enabled by the frontend but only runs when the backend sees that the image needs a distant-face pass.
 - The login-first page has an Apple-like animated product layout with glass styling and a reduced-motion fallback.
 - Crop expansion and vertical offset are hidden inside the `Crop box tuning` expander until portrait framing needs adjustment.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked before saving crops.
@@ -139,7 +139,7 @@ Hover over a control label in the frontend to see a short explanation of what th
 Default recommended preset:
 
 - Detection strategy: `Balanced recall`, applied automatically.
-- `Distant-face sensitivity`: `0.10`
+- `Distant-face sensitivity`: `0.20`
 - `Close-face sensitivity`: `0.23`
 - `Crop expansion`: `2.20`
 - `Vertical offset`: `0.20`
@@ -156,9 +156,9 @@ crop_scale
 shoulder_bias
 ```
 
-The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: balanced full-plus-short detection with `small_face_scan` enabled. This is the best current default for the product goal because false positives are acceptable, while missed faces are not.
+The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: balanced full-plus-short detection with `small_face_scan` allowed. The backend decides whether the extra small-face pass is needed, so normal close-up photos do not get the noisy tiled scan.
 
-`small_face_scan` runs an extra overlapping tile pass with the short-range model. It helps when a full-body group photo is only a few hundred pixels wide and each face becomes extremely small after whole-image resizing. This can add false positives, but it is useful when the priority is not missing distant faces.
+`small_face_scan` can run an extra overlapping tile pass with the short-range model. It runs when the base detection finds no faces, or when all detected faces are small relative to the image. It helps when a full-body group photo is only a few hundred pixels wide and each face becomes extremely small after whole-image resizing. Normal full-body photos also get crop-region duplicate filtering so one person is less likely to produce several shifted boxes.
 
 How to tune the two model thresholds:
 
@@ -182,7 +182,7 @@ Crop controls:
 Parameter meanings:
 
 - `detection_range`: set by the frontend to `balanced`.
-- `small_face_scan`: set by the frontend to `true`.
+- `small_face_scan`: set by the frontend to `true`, then applied by the backend only when the image needs the extra small-face pass.
 - `full_range_confidence`: exposed as `Distant-face sensitivity`.
 - `short_range_confidence`: exposed as `Close-face sensitivity`.
 - `min_detection_confidence`: legacy fallback used only if the model-specific confidence values are not provided.

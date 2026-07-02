@@ -12,6 +12,9 @@ API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 BEST_DETECTION_RANGE = "balanced"
 BEST_DETECTION_LABEL = "Balanced recall"
 BEST_SMALL_FACE_SCAN = True
+CONTROL_DEFAULTS_VERSION = 2
+DEFAULT_FULL_RANGE_CONFIDENCE = 0.20
+DEFAULT_SHORT_RANGE_CONFIDENCE = 0.23
 
 
 st.set_page_config(page_title="AIFX Face Processing", layout="wide")
@@ -720,13 +723,26 @@ def clamp_value(value, minimum, maximum):
     return min(maximum, max(minimum, round(float(value), 2)))
 
 
+def init_control_defaults():
+    if st.session_state.get("control_defaults_version") == CONTROL_DEFAULTS_VERSION:
+        return
+    st.session_state.full_range_confidence = DEFAULT_FULL_RANGE_CONFIDENCE
+    st.session_state.full_range_confidence_slider = DEFAULT_FULL_RANGE_CONFIDENCE
+    st.session_state.full_range_confidence_input = DEFAULT_FULL_RANGE_CONFIDENCE
+    st.session_state.short_range_confidence = DEFAULT_SHORT_RANGE_CONFIDENCE
+    st.session_state.short_range_confidence_slider = DEFAULT_SHORT_RANGE_CONFIDENCE
+    st.session_state.short_range_confidence_input = DEFAULT_SHORT_RANGE_CONFIDENCE
+    st.session_state.control_defaults_version = CONTROL_DEFAULTS_VERSION
+
+
 def init_control_state(name, default, minimum, maximum):
     value = clamp_value(st.session_state.get(name, default), minimum, maximum)
     st.session_state[name] = value
 
 
-init_control_state("full_range_confidence", 0.10, 0.01, 0.99)
-init_control_state("short_range_confidence", 0.23, 0.01, 0.99)
+init_control_defaults()
+init_control_state("full_range_confidence", DEFAULT_FULL_RANGE_CONFIDENCE, 0.01, 0.99)
+init_control_state("short_range_confidence", DEFAULT_SHORT_RANGE_CONFIDENCE, 0.01, 0.99)
 init_control_state("crop_scale", 2.2, 1.0, 5.0)
 init_control_state("shoulder_bias", 0.2, -1.5, 1.5)
 
@@ -830,7 +846,7 @@ st.sidebar.markdown(
     <div class="account-panel">
         <div class="account-kicker">Detection strategy</div>
         <div class="account-title">{BEST_DETECTION_LABEL}</div>
-        <div class="account-copy">Runs the best recall-first pipeline automatically, including small-face scanning for distant group photos.</div>
+        <div class="account-copy">Runs the best recall-first pipeline automatically, with small-face scanning only when the image needs it.</div>
     </div>
     """,
     unsafe_allow_html=True,
