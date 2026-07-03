@@ -223,15 +223,13 @@ st.markdown(
     }
     .stApp {
         background:
-            radial-gradient(circle at 52% 4%, rgba(98, 58, 220, 0.22), transparent 32%),
-            radial-gradient(circle at 10% 86%, rgba(15, 142, 199, 0.16), transparent 34%),
-            linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)),
-            #07080D;
+            radial-gradient(circle at 50% -10%, rgba(255, 255, 255, 0.085), transparent 28%),
+            linear-gradient(180deg, #090A0D 0%, #050609 62%, #050609 100%);
         color: #F7F8FA;
     }
     .block-container {
-        max-width: 1420px;
-        padding-top: 1.2rem;
+        max-width: 1380px;
+        padding-top: 0.95rem;
         padding-bottom: 3rem;
     }
     div[data-testid="stTabs"] button {
@@ -239,7 +237,7 @@ st.markdown(
         font-weight: 760;
     }
     div[data-testid="stTabs"] button[aria-selected="true"] {
-        color: #FF4B62;
+        color: #F5F5F7;
     }
     div[data-testid="stButton"] button {
         border-radius: 8px;
@@ -258,37 +256,47 @@ st.markdown(
         outline-offset: 2px;
     }
     div[data-testid="stFileUploader"] {
-        max-width: 760px;
-        margin: 8px auto 20px;
+        max-width: 820px;
+        margin: 10px auto 18px;
     }
-    div[data-testid="stFileUploader"] label p {
-        color: #FFFFFF;
-        text-align: center;
-        font-size: 1.35rem;
-        font-weight: 820;
-        margin-bottom: 12px;
+    div[data-testid="stFileUploader"] label {
+        display: none;
     }
     div[data-testid="stFileUploader"] section {
-        min-height: 250px;
-        border-radius: 8px;
-        border: 1px dashed rgba(255,255,255,0.16);
-        background: rgba(255,255,255,0.035);
+        min-height: 292px;
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background:
+            linear-gradient(180deg, rgba(255,255,255,0.085), rgba(255,255,255,0.028)),
+            rgba(16, 17, 21, 0.82);
+        box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.10),
+            0 28px 90px rgba(0,0,0,0.38);
         display: flex;
         align-items: center;
         justify-content: center;
         text-align: center;
+        backdrop-filter: blur(22px);
+        transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
+    }
+    div[data-testid="stFileUploader"] section:hover {
+        border-color: rgba(0, 113, 227, 0.46);
+        transform: translateY(-1px);
     }
     div[data-testid="stFileUploader"] section small {
-        color: #8F96A4;
+        color: #8E8E93;
     }
     div[data-testid="stFileUploader"] button {
-        width: 92px;
-        height: 92px;
-        border-radius: 14px;
+        width: 86px;
+        height: 86px;
+        border-radius: 22px;
         color: transparent;
-        background: linear-gradient(135deg, #426CFF, #DA4BE8);
-        border: 0;
-        box-shadow: 0 18px 42px rgba(123, 89, 255, 0.28);
+        background:
+            linear-gradient(180deg, #FFFFFF, #E8E8ED);
+        border: 1px solid rgba(255,255,255,0.68);
+        box-shadow:
+            0 18px 44px rgba(0,0,0,0.35),
+            0 0 0 8px rgba(255,255,255,0.045);
         position: relative;
         letter-spacing: 0;
     }
@@ -298,9 +306,41 @@ st.markdown(
         inset: 0;
         display: grid;
         place-items: center;
-        color: #FFFFFF;
-        font-size: 2.3rem;
-        font-weight: 520;
+        color: #1D1D1F;
+        font-size: 2.35rem;
+        font-weight: 430;
+    }
+    .upload-intro {
+        max-width: 820px;
+        margin: 22px auto 0;
+        text-align: center;
+    }
+    .upload-eyebrow {
+        color: #86868B;
+        font-size: 0.78rem;
+        font-weight: 720;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+    }
+    .upload-headline {
+        color: #F5F5F7;
+        font-size: clamp(2.2rem, 5.6vw, 4.55rem);
+        line-height: 1.04;
+        font-weight: 760;
+        letter-spacing: 0;
+    }
+    .upload-subtitle {
+        color: #A1A1A6;
+        font-size: clamp(1rem, 2vw, 1.25rem);
+        line-height: 1.45;
+        margin: 14px auto 8px;
+        max-width: 560px;
+    }
+    .upload-microcopy {
+        color: #6E6E73;
+        font-size: 0.82rem;
+        margin-bottom: 14px;
     }
     div[data-testid="stAlert"] {
         border-radius: 8px;
@@ -327,8 +367,8 @@ st.markdown(
         width: 24px;
         height: 24px;
         border-radius: 50%;
-        background: linear-gradient(135deg, #3D7BFF, #E84CCB);
-        border: 1px solid rgba(255, 255, 255, 0.72);
+        background: linear-gradient(180deg, #F5F5F7, #8E8E93);
+        border: 1px solid rgba(255, 255, 255, 0.34);
         flex: 0 0 auto;
     }
     .nav-meta {
@@ -869,31 +909,49 @@ def selected_face_indices(faces):
 tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
 
 with tab_workspace:
+    upload_intro_slot = st.empty()
     uploaded_file = st.file_uploader(
-        "Start With A Group Photo",
+        "Upload group photo",
         type=["jpg", "jpeg", "png"],
         help="Click the plus button or drop a JPG/PNG here.",
+        label_visibility="collapsed",
     )
+    if uploaded_file is None:
+        with upload_intro_slot:
+            st.markdown(
+                """
+                <div class="upload-intro">
+                    <div class="upload-eyebrow">AIFX FACE CROP</div>
+                    <div class="upload-headline">Start with one photo.</div>
+                    <div class="upload-subtitle">Add a group image, review detected faces, then save only the crops you choose.</div>
+                    <div class="upload-microcopy">JPG or PNG - crops are created after selection</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
     if uploaded_file is not None:
         st.markdown(
             """
             <style>
             div[data-testid="stFileUploader"] {
                 max-width: 100%;
-                margin: 0 0 10px;
+                margin: 0 0 12px;
             }
             div[data-testid="stFileUploader"] label {
                 display: none;
             }
             div[data-testid="stFileUploader"] section {
-                min-height: 70px;
+                min-height: 68px;
                 justify-content: flex-start;
                 padding: 10px 14px;
+                border-radius: 12px;
+                background: rgba(255,255,255,0.045);
+                box-shadow: none;
             }
             div[data-testid="stFileUploader"] button {
                 width: 44px;
                 height: 44px;
-                border-radius: 8px;
+                border-radius: 10px;
                 box-shadow: none;
             }
             div[data-testid="stFileUploader"] button::after {
@@ -908,7 +966,7 @@ with tab_workspace:
             st.rerun()
 
     if uploaded_file is None:
-        st.caption("JPG or PNG only. Candidate faces appear before any crop files are saved.")
+        st.caption("Click the add button or drop a photo into the upload area.")
 
     if uploaded_file is not None:
         image_bytes = uploaded_file.getvalue()
@@ -929,6 +987,9 @@ with tab_workspace:
 
             detect_label = "Run Detection Again" if detection_result else "Detect All Faces"
             if st.button(detect_label, type="primary", use_container_width=True):
+                status_slot = st.empty()
+                with status_slot:
+                    st.info("Running MediaPipe detection...")
                 with st.spinner("Detecting candidate faces…"):
                     files = {
                         "file": (
@@ -967,6 +1028,7 @@ with tab_workspace:
                             if str(key).startswith("select_face_"):
                                 st.session_state.pop(key, None)
                         st.rerun()
+                status_slot.empty()
 
             detection_result = st.session_state.get("detection_result")
             if detection_result:
