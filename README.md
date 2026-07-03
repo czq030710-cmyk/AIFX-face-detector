@@ -138,10 +138,10 @@ The frontend exposes controls for the main detection and crop parameters:
 Each control pairs a slider with a precise number input. Changing either side updates the same value, so manual edits and slider movement stay in sync.
 Hover over a control label in the frontend to see a short explanation of what that parameter changes.
 
-Default recommended preset:
+Default recommended preset, tuned against the local `Downloads/test picture` set for stronger face recall:
 
 - Detection strategy: `Balanced recall`, applied automatically.
-- `Distant-face sensitivity`: `0.15`
+- `Distant-face sensitivity`: `0.10`
 - `Close-face sensitivity`: `0.23`
 - `Crop expansion`: `2.20`
 - `Vertical offset`: `0.20`
