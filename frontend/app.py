@@ -257,26 +257,61 @@ st.markdown(
         outline: 2px solid #6EA8FF;
         outline-offset: 2px;
     }
+    div[data-testid="stFileUploader"] {
+        max-width: 760px;
+        margin: 8px auto 20px;
+    }
+    div[data-testid="stFileUploader"] label p {
+        color: #FFFFFF;
+        text-align: center;
+        font-size: 1.35rem;
+        font-weight: 820;
+        margin-bottom: 12px;
+    }
     div[data-testid="stFileUploader"] section {
+        min-height: 250px;
         border-radius: 8px;
-        border: 1px dashed rgba(255,255,255,0.18);
-        background: rgba(255,255,255,0.05);
+        border: 1px dashed rgba(255,255,255,0.16);
+        background: rgba(255,255,255,0.035);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+    }
+    div[data-testid="stFileUploader"] section small {
+        color: #8F96A4;
+    }
+    div[data-testid="stFileUploader"] button {
+        width: 92px;
+        height: 92px;
+        border-radius: 14px;
+        color: transparent;
+        background: linear-gradient(135deg, #426CFF, #DA4BE8);
+        border: 0;
+        box-shadow: 0 18px 42px rgba(123, 89, 255, 0.28);
+        position: relative;
+        letter-spacing: 0;
+    }
+    div[data-testid="stFileUploader"] button::after {
+        content: "+";
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #FFFFFF;
+        font-size: 2.3rem;
+        font-weight: 520;
     }
     div[data-testid="stAlert"] {
         border-radius: 8px;
     }
     .studio-nav {
-        margin: 10px auto 22px;
-        min-height: 66px;
-        border: 1px solid rgba(255, 255, 255, 0.10);
-        border-radius: 8px;
-        background: rgba(8, 9, 14, 0.90);
-        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+        margin: 4px auto 14px;
+        min-height: 34px;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 22px;
-        gap: 18px;
+        gap: 12px;
     }
     .brand-mark {
         display: flex;
@@ -285,156 +320,32 @@ st.markdown(
         color: #FFFFFF;
         font-weight: 780;
         letter-spacing: 5px;
-        font-size: 1.05rem;
+        font-size: 0.95rem;
         min-width: 0;
     }
     .brand-orb {
-        width: 34px;
-        height: 34px;
+        width: 24px;
+        height: 24px;
         border-radius: 50%;
         background: linear-gradient(135deg, #3D7BFF, #E84CCB);
-        border: 2px solid rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.72);
         flex: 0 0 auto;
     }
-    .nav-status {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
+    .nav-meta {
         color: #A9B2C2;
-        font-size: 0.82rem;
-        font-weight: 780;
-        text-transform: uppercase;
-        min-width: 0;
-        flex-wrap: wrap;
-    }
-    .nav-chip {
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 8px;
-        padding: 7px 10px;
-        background: rgba(255,255,255,0.045);
-        white-space: nowrap;
-    }
-    .nav-chip.hot {
-        color: #FFFFFF;
-        border-color: rgba(95, 140, 255, 0.42);
-        background: rgba(62, 111, 255, 0.18);
-    }
-    .nav-user {
-        color: #DDE3EF;
-        font-weight: 700;
-        max-width: 260px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        text-align: right;
-    }
-    .studio-kicker {
-        color: #8A7DFF;
         font-size: 0.78rem;
-        font-weight: 800;
-        letter-spacing: 6px;
-        text-transform: uppercase;
-        margin-bottom: 10px;
-    }
-    .studio-title {
-        color: #FFFFFF;
-        font-size: clamp(2rem, 5vw, 4.1rem);
-        line-height: 1.05;
-        font-weight: 820;
-        letter-spacing: 0;
-        margin-bottom: 6px;
-        text-wrap: balance;
-    }
-    .studio-title span {
-        background: linear-gradient(90deg, #FF4DB8, #4EA2FF, #18D8FF);
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-    }
-    .studio-subtitle {
-        color: #9EA4B1;
-        font-size: 1rem;
-        margin-bottom: 16px;
-        max-width: 760px;
-        text-wrap: pretty;
-    }
-    .flow-strip {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        margin: 16px 0 18px;
-    }
-    .flow-step {
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 8px;
-        padding: 12px;
-        background: rgba(255,255,255,0.035);
-        min-width: 0;
-    }
-    .flow-step.active {
-        border-color: rgba(255, 75, 98, 0.58);
-        background: linear-gradient(135deg, rgba(255,75,98,0.18), rgba(62,111,255,0.08));
-    }
-    .flow-num {
-        color: #FF4B62;
-        font-size: 0.72rem;
-        font-weight: 840;
-        letter-spacing: 2px;
-        margin-bottom: 5px;
-    }
-    .flow-label {
-        color: #FFFFFF;
-        font-weight: 780;
-        font-size: 0.95rem;
+        font-weight: 720;
+        text-align: right;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    .flow-copy {
-        color: #9299A8;
-        font-size: 0.82rem;
-        line-height: 1.35;
-        margin-top: 4px;
-    }
-    .panel,
-    .empty-panel {
+    .panel {
         border: 1px solid rgba(255, 255, 255, 0.09);
         border-radius: 8px;
         background: rgba(9, 10, 16, 0.88);
         padding: 22px;
         box-shadow: 0 20px 55px rgba(0, 0, 0, 0.34);
-    }
-    .empty-panel {
-        min-height: 340px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        text-align: center;
-        border-style: dashed;
-    }
-    .empty-icon {
-        width: 54px;
-        height: 54px;
-        border-radius: 8px;
-        display: grid;
-        place-items: center;
-        color: #FFFFFF;
-        font-size: 1.55rem;
-        background: linear-gradient(135deg, #426CFF, #DA4BE8);
-        margin-bottom: 16px;
-    }
-    .empty-title {
-        color: #FFFFFF;
-        font-weight: 790;
-        font-size: 1.2rem;
-        margin-bottom: 7px;
-    }
-    .empty-copy {
-        color: #9EA4B1;
-        max-width: 460px;
-        line-height: 1.45;
     }
     .panel-title {
         color: #F4F6FA;
@@ -510,15 +421,9 @@ st.markdown(
             flex-direction: column;
             padding: 16px;
         }
-        .nav-status {
-            justify-content: flex-start;
-        }
-        .nav-user {
+        .nav-meta {
             max-width: 100%;
             text-align: left;
-        }
-        .flow-strip {
-            grid-template-columns: 1fr;
         }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -682,12 +587,7 @@ st.markdown(
     f"""
     <div class="studio-nav">
         <div class="brand-mark"><div class="brand-orb"></div><div>AIFX</div></div>
-        <div class="nav-status">
-            <span class="nav-chip hot">Face Crop Studio</span>
-            <span class="nav-chip">Detect → Select → Save</span>
-            <span class="nav-chip">{provider_label}</span>
-        </div>
-        <div class="nav-user">{nav_user}</div>
+        <div class="nav-meta">{provider_label} · {nav_user}</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -966,84 +866,49 @@ def selected_face_indices(faces):
     ]
 
 
-def workspace_stage(uploaded_file):
-    if uploaded_file is None:
-        return "upload"
-    if st.session_state.get("crop_result"):
-        return "output"
-    if st.session_state.get("detection_result"):
-        return "select"
-    return "detect"
-
-
-def render_flow(stage):
-    steps = [
-        ("upload", "01", "Upload Image", "Choose a JPG or PNG from your workspace."),
-        ("detect", "02", "Detect Faces", "Find every candidate before saving crops."),
-        ("select", "03", "Select & Crop", "Save only the faces you choose."),
-    ]
-    order = {"upload": 0, "detect": 1, "select": 2, "output": 2}
-    active_index = order.get(stage, 0)
-    html = ['<div class="flow-strip">']
-    for index, (key, number, label, copy) in enumerate(steps):
-        class_name = "flow-step active" if index == active_index else "flow-step"
-        html.append(
-            f'<div class="{class_name}">'
-            f'<div class="flow-num">{number}</div>'
-            f'<div class="flow-label">{label}</div>'
-            f'<div class="flow-copy">{copy}</div>'
-            "</div>"
-        )
-    html.append("</div>")
-    st.markdown("".join(html), unsafe_allow_html=True)
-
-
 tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
 
 with tab_workspace:
-    st.markdown(
-        """
-        <div class="studio-kicker">SUPADAWG · MULTI-FACE RECOGNITION V2.0</div>
-        <div class="studio-title">AIFX <span>Studio</span></div>
-        <div class="studio-subtitle">Detect every candidate face first, review the crop regions, then save only the faces you select.</div>
-        """,
-        unsafe_allow_html=True,
+    uploaded_file = st.file_uploader(
+        "Start With A Group Photo",
+        type=["jpg", "jpeg", "png"],
+        help="Click the plus button or drop a JPG/PNG here.",
     )
-    upload_col, action_col = st.columns([0.72, 0.28])
-    with upload_col:
-        uploaded_file = st.file_uploader("Upload Or Change Image", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
-    with action_col:
+    if uploaded_file is not None:
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stFileUploader"] {
+                max-width: 100%;
+                margin: 0 0 10px;
+            }
+            div[data-testid="stFileUploader"] label {
+                display: none;
+            }
+            div[data-testid="stFileUploader"] section {
+                min-height: 70px;
+                justify-content: flex-start;
+                padding: 10px 14px;
+            }
+            div[data-testid="stFileUploader"] button {
+                width: 44px;
+                height: 44px;
+                border-radius: 8px;
+                box-shadow: none;
+            }
+            div[data-testid="stFileUploader"] button::after {
+                font-size: 1.45rem;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         if st.button("Clear workspace", use_container_width=True):
             reset_detection_state()
             st.rerun()
 
-    render_flow(workspace_stage(uploaded_file))
-
     if uploaded_file is None:
-        empty_left, empty_right = st.columns([0.62, 0.38], gap="large")
-        with empty_left:
-            st.markdown(
-                """
-                <div class="empty-panel">
-                    <div class="empty-icon">+</div>
-                    <div class="empty-title">Start With A Group Photo</div>
-                    <div class="empty-copy">Upload a JPG or PNG. The app will show candidate faces before creating any crop files.</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with empty_right:
-            st.markdown(
-                """
-                <div class="panel">
-                    <div class="panel-title">What Happens Next</div>
-                    <div class="flow-copy">1. Detect all candidate faces in the image.</div>
-                    <div class="flow-copy">2. Review each face preview and crop coordinates.</div>
-                    <div class="flow-copy">3. Select one or more faces and save only those crops.</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+        st.caption("JPG or PNG only. Candidate faces appear before any crop files are saved.")
 
     if uploaded_file is not None:
         image_bytes = uploaded_file.getvalue()
