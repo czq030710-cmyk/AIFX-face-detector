@@ -10,7 +10,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - `balanced` mode runs both MediaPipe ranges on the original image, removes duplicate face or crop regions, and sorts candidates by confidence so the user can manually choose the true faces before cropping.
 - FastAPI provides `/health`, `/detect-faces`, and `/crop-selected`.
 - Streamlit provides a compact Apple-inspired workspace with a polished plus-button upload entry, detect-first flow, and select-then-crop output.
-- The workspace keeps detected face rows inside a fixed-height scroll panel.
+- The workspace keeps detected face rows with crop thumbnails inside a fixed-height scroll panel.
 - The Streamlit sidebar has separate linked slider-plus-number controls for distant-face and close-face sensitivity.
 - The frontend no longer uses tile-based small-face scanning by default; detection stays on the original image for simpler tuning and lower compute cost.
 - The login-first page has an Apple-like animated product layout with glass styling and a reduced-motion fallback.
