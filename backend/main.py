@@ -20,6 +20,10 @@ DETECTORS = {
     "short_range": FaceDetector(model_range="short_range"),
     "full_range": FaceDetector(model_range="full_range"),
 }
+TILE_SCAN_ENABLED = True
+TILE_SCAN_GRID = "2x2"
+TILE_SCAN_TILE_RATIO = 0.62
+TILE_SCAN_MIN_SIDE = 900
 supabase_gateway = SupabaseGateway()
 
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
@@ -232,6 +236,9 @@ async def detect_faces(
             "detection_range": detection_range,
             "full_range_confidence": detection_thresholds["full_range"],
             "short_range_confidence": detection_thresholds["short_range"],
+            "tile_scan_enabled": detection_range == "balanced" and should_run_tile_scan(image),
+            "tile_scan_grid": TILE_SCAN_GRID,
+            "tile_scan_tile_ratio": TILE_SCAN_TILE_RATIO,
             "crop_scale": crop_scale,
             "shoulder_bias": shoulder_bias,
         },
@@ -260,6 +267,8 @@ async def detect_faces(
         "detection_range": detection_range,
         "full_range_confidence": detection_thresholds["full_range"],
         "short_range_confidence": detection_thresholds["short_range"],
+        "tile_scan_enabled": detection_range == "balanced" and should_run_tile_scan(image),
+        "tile_scan_grid": TILE_SCAN_GRID,
         "crop_scale": crop_scale,
         "shoulder_bias": shoulder_bias,
         "image_width": image.width,
@@ -427,7 +436,53 @@ def detect_faces_by_range(
         model_detector.min_detection_confidence = detection_thresholds[model_range]
         for face in model_detector.detect_faces(image):
             faces.append({**face, "model_range": model_range})
+
+    if detection_range == "balanced" and should_run_tile_scan(image):
+        faces.extend(detect_faces_with_tile_scan(image, detection_thresholds["full_range"]))
     return faces
+
+
+def should_run_tile_scan(image: Image.Image):
+    return TILE_SCAN_ENABLED and min(image.width, image.height) >= TILE_SCAN_MIN_SIDE
+
+
+def detect_faces_with_tile_scan(image: Image.Image, min_detection_confidence: float):
+    detector = DETECTORS["full_range"]
+    previous_confidence = detector.min_detection_confidence
+    detector.min_detection_confidence = min_detection_confidence
+    faces = []
+    try:
+        for tile_index, (tile_x, tile_y, tile_width, tile_height) in enumerate(tile_scan_boxes(image)):
+            tile = image.crop((tile_x, tile_y, tile_x + tile_width, tile_y + tile_height))
+            for face in detector.detect_faces(tile):
+                faces.append(
+                    {
+                        **face,
+                        "x": face["x"] + tile_x,
+                        "y": face["y"] + tile_y,
+                        "model_range": "full_range_tile",
+                        "tile_index": tile_index,
+                    }
+                )
+    finally:
+        detector.min_detection_confidence = previous_confidence
+    return faces
+
+
+def tile_scan_boxes(image: Image.Image):
+    tile_width = min(image.width, max(1, int(round(image.width * TILE_SCAN_TILE_RATIO))))
+    tile_height = min(image.height, max(1, int(round(image.height * TILE_SCAN_TILE_RATIO))))
+    x_positions = [0, image.width - tile_width]
+    y_positions = [0, image.height - tile_height]
+    boxes = []
+    seen = set()
+    for tile_y in y_positions:
+        for tile_x in x_positions:
+            box = (tile_x, tile_y, tile_width, tile_height)
+            if box not in seen:
+                boxes.append(box)
+                seen.add(box)
+    return boxes
 
 
 def is_plausible_detected_face(face, image_width: int, image_height: int):
@@ -444,6 +499,8 @@ def is_plausible_detected_face(face, image_width: int, image_height: int):
     max_dimension_ratio = max(width, height) / min_side
     confidence = face.get("score", 0.0)
     if confidence < 0.45 and max_dimension_ratio > 0.35:
+        return False
+    if confidence < 0.20 and max_dimension_ratio > 0.18:
         return False
     if confidence < 0.35 and max_dimension_ratio > 0.20:
         touches_image_edge = (

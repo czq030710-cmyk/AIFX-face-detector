@@ -7,12 +7,13 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Face detection core is implemented in `core_ai/face_detector.py`.
 - The local detector uses official MediaPipe BlazeFace model files with OpenCV DNN inference for macOS stability.
 - The detection API supports `short_range`, `full_range`, and `balanced`, while the frontend automatically uses the best recall-first `balanced` strategy.
-- `balanced` mode runs both MediaPipe ranges on the original image, removes duplicate face or crop regions, and sorts candidates by confidence so the user can manually choose the true faces before cropping.
+- `balanced` mode runs both MediaPipe ranges on the original image, then runs a light 2x2 overlapping full-range tile pass for distant faces, removes duplicate regions, and sorts candidates by confidence so the user can manually choose the true faces before cropping.
 - FastAPI provides `/health`, `/detect-faces`, and `/crop-selected`.
-- Streamlit provides a compact Apple-inspired workspace with a polished plus-button upload entry, detect-first flow, and select-then-crop output.
+- Streamlit provides a compact Apple-inspired single-image workspace with a polished plus-button upload entry, detect-first flow, and select-then-crop output.
 - The workspace keeps detected face rows with crop thumbnails inside a fixed-height scroll panel, with coordinates hidden in collapsed details.
 - The Streamlit sidebar has separate linked slider-plus-number controls for distant-face and close-face sensitivity.
-- The frontend no longer uses tile-based small-face scanning by default; detection stays on the original image for simpler tuning and lower compute cost.
+- The frontend hides the uploader after one image is loaded, then shows a simple active-file bar and a change-image action.
+- The saved-output panel shows selected crop previews and a download button for each generated crop.
 - The login-first page has an Apple-like animated product layout with glass styling and a reduced-motion fallback.
 - Crop expansion and vertical offset are hidden inside the `Crop box tuning` expander until portrait framing needs adjustment.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked before saving crops.
@@ -156,9 +157,9 @@ crop_scale
 shoulder_bias
 ```
 
-The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: one short-range MediaPipe BlazeFace pass first, then one full-range MediaPipe BlazeFace pass on the original image. The backend then merges duplicate detections and keeps the candidate list sorted by confidence.
+The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: one short-range MediaPipe BlazeFace pass first, then one full-range MediaPipe BlazeFace pass on the original image. For large images, the backend also runs a light 2x2 overlapping full-range tile scan. This still uses the same MediaPipe BlazeFace model family; it only gives distant faces a larger local view before merging duplicates.
 
-Tile-based small-face scanning is not part of the default workflow. It was removed from the automatic path because it costs more compute, can split faces near tile boundaries, and adds extra tuning complexity. Very low-resolution distant photos where each face is only a few pixels wide can still hit the BlazeFace model limit, so they are not used as the default tuning target.
+The tile scan is intentionally small: four overlapping tiles, not a dense sliding window. This improves recall on group photos and stage/wedding images without making the workflow as expensive or noisy as a full sliding-window scan. Very low-resolution distant photos where each face is only a few pixels wide can still hit the BlazeFace model limit.
 
 How to tune the two model thresholds:
 
@@ -193,6 +194,7 @@ The backend also applies a second filtering pass after the model returns candida
 
 - Duplicate model detections are suppressed using the smaller detected face boxes, not the expanded crop boxes.
 - Very large, low-confidence detections are rejected before crop expansion so background patterns do not become full-image crop candidates.
+- Very large low-score tile detections are filtered before they appear in the selectable candidate list.
 - Remaining candidates are sorted from highest to lowest confidence before being numbered in the UI.
 - Low-confidence candidates are kept so difficult or distant faces can still be reviewed manually.
 

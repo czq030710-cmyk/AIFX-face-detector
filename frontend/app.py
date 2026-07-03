@@ -450,6 +450,53 @@ st.markdown(
         overflow-wrap: anywhere;
         font-size: 0.84rem;
     }
+    .active-file-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin: 0 0 18px;
+        background:
+            linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.028)),
+            rgba(14, 15, 20, 0.86);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    }
+    .active-file-name {
+        color: #F5F5F7;
+        font-size: 0.98rem;
+        font-weight: 760;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .active-file-meta {
+        color: #8E8E93;
+        font-size: 0.8rem;
+        margin-top: 3px;
+    }
+    .output-card {
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px;
+        padding: 10px;
+        margin: 8px 0;
+        background: rgba(255,255,255,0.035);
+    }
+    .output-card-title {
+        color: #F5F5F7;
+        font-size: 0.84rem;
+        font-weight: 760;
+        overflow-wrap: anywhere;
+    }
+    .output-card-url {
+        color: #8F98A8;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        margin: 4px 0 8px;
+        overflow-wrap: anywhere;
+    }
     @media (max-width: 900px) {
         .login-panel {
             padding: 18px;
@@ -507,6 +554,17 @@ def absolute_url(url):
     if url.startswith("http://") or url.startswith("https://"):
         return url
     return f"{API_URL}{url}"
+
+
+def image_content_type(filename, content_type=None):
+    if content_type in {"image/jpeg", "image/png"}:
+        return content_type
+    extension = os.path.splitext(filename or "")[1].lower()
+    if extension in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if extension == ".png":
+        return "image/png"
+    return "application/octet-stream"
 
 
 def save_auth_session(auth_payload):
@@ -889,8 +947,10 @@ def reset_detection_state():
     st.session_state.pop("detection_result", None)
     st.session_state.pop("uploaded_image_bytes", None)
     st.session_state.pop("uploaded_filename", None)
+    st.session_state.pop("uploaded_content_type", None)
     st.session_state.pop("crop_result", None)
     st.session_state.pop("select_all_faces", None)
+    st.session_state.upload_uploader_version = st.session_state.get("upload_uploader_version", 0) + 1
     for key in list(st.session_state.keys()):
         if str(key).startswith("select_face_"):
             st.session_state.pop(key, None)
@@ -907,71 +967,52 @@ def selected_face_indices(faces):
 tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
 
 with tab_workspace:
-    upload_intro_slot = st.empty()
-    uploaded_file = st.file_uploader(
-        "Upload group photo",
-        type=["jpg", "jpeg", "png"],
-        help="Click the plus button or drop a JPG/PNG here.",
-        label_visibility="collapsed",
-    )
-    if uploaded_file is None:
-        with upload_intro_slot:
-            st.markdown(
-                """
-                <div class="upload-intro">
-                    <div class="upload-eyebrow">AIFX FACE CROP</div>
-                    <div class="upload-headline">Start with one photo.</div>
-                    <div class="upload-subtitle">Add a group image, review detected faces, then save only the crops you choose.</div>
-                    <div class="upload-microcopy">JPG or PNG - crops are created after selection</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-    if uploaded_file is not None:
+    image_bytes = st.session_state.get("uploaded_image_bytes")
+    uploaded_name = st.session_state.get("uploaded_filename")
+    uploaded_type = st.session_state.get("uploaded_content_type", "application/octet-stream")
+
+    if image_bytes is None:
         st.markdown(
             """
-            <style>
-            div[data-testid="stFileUploader"] {
-                max-width: 100%;
-                margin: 0 0 12px;
-            }
-            div[data-testid="stFileUploader"] label {
-                display: none;
-            }
-            div[data-testid="stFileUploader"] section {
-                min-height: 68px;
-                justify-content: flex-start;
-                padding: 10px 14px;
-                border-radius: 12px;
-                background: rgba(255,255,255,0.045);
-                box-shadow: none;
-            }
-            div[data-testid="stFileUploader"] button {
-                width: 44px;
-                height: 44px;
-                border-radius: 10px;
-                box-shadow: none;
-            }
-            div[data-testid="stFileUploader"] button::after {
-                font-size: 1.45rem;
-            }
-            </style>
+            <div class="upload-intro">
+                <div class="upload-eyebrow">AIFX FACE CROP</div>
+                <div class="upload-headline">Start with one photo.</div>
+                <div class="upload-subtitle">Add a group image, review detected faces, then save only the crops you choose.</div>
+                <div class="upload-microcopy">JPG or PNG - crops are created after selection</div>
+            </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Clear workspace", use_container_width=True):
+        uploaded_file = st.file_uploader(
+            "Upload group photo",
+            type=["jpg", "jpeg", "png"],
+            help="Click the plus button or drop a JPG/PNG here.",
+            label_visibility="collapsed",
+            key=f"workspace_uploader_{st.session_state.get('upload_uploader_version', 0)}",
+        )
+        if uploaded_file is not None:
             reset_detection_state()
+            st.session_state.uploaded_image_bytes = uploaded_file.getvalue()
+            st.session_state.uploaded_filename = uploaded_file.name
+            st.session_state.uploaded_content_type = image_content_type(uploaded_file.name, uploaded_file.type)
             st.rerun()
-
-    if uploaded_file is None:
         st.caption("Click the add button or drop a photo into the upload area.")
 
-    if uploaded_file is not None:
-        image_bytes = uploaded_file.getvalue()
-        if st.session_state.get("uploaded_filename") != uploaded_file.name:
+    if image_bytes is not None:
+        st.markdown(
+            f"""
+            <div class="active-file-card">
+                <div>
+                    <div class="active-file-name">{escape(uploaded_name or "Uploaded image")}</div>
+                    <div class="active-file-meta">One active image - replace it to start a new workspace</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Change Image", use_container_width=True):
             reset_detection_state()
-            st.session_state.uploaded_filename = uploaded_file.name
-        st.session_state.uploaded_image_bytes = image_bytes
+            st.rerun()
 
         left_panel, right_panel = st.columns([0.62, 0.38], gap="large")
         with left_panel:
@@ -991,9 +1032,9 @@ with tab_workspace:
                 with st.spinner("Detecting candidate faces…"):
                     files = {
                         "file": (
-                            uploaded_file.name,
+                            uploaded_name or "upload.png",
                             image_bytes,
-                            uploaded_file.type or "application/octet-stream",
+                            uploaded_type,
                         )
                     }
                     data = {
@@ -1046,6 +1087,7 @@ with tab_workspace:
                 metric_items.extend(
                     [
                         "short then full",
+                        "4-tile distant scan",
                         "confidence sorted",
                         f"{detection_result['image_width']} x {detection_result['image_height']}",
                         detection_result["storage_provider"],
@@ -1135,18 +1177,32 @@ with tab_workspace:
                             st.success(crop_result["message"])
                 if st.session_state.get("crop_result"):
                     st.markdown('<div class="panel-title">Saved Output</div>', unsafe_allow_html=True)
-                    output_list = st.container(height=180, border=True)
+                    output_list = st.container(height=260, border=True)
                     with output_list:
                         for face in st.session_state.crop_result.get("faces", []):
-                            st.markdown(
-                                f"""
-                                <div class="output-line">
-                                    <strong>{escape(face['filename'])}</strong><br>
-                                    {escape(absolute_url(face['url']))}
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
+                            crop_bytes = base64.b64decode(face["preview_base64"])
+                            preview_col, download_col = st.columns([0.34, 0.66], gap="small")
+                            with preview_col:
+                                st.image(BytesIO(crop_bytes), width="stretch")
+                            with download_col:
+                                st.markdown(
+                                    f"""
+                                    <div class="output-card">
+                                        <div class="output-card-title">{escape(face['filename'])}</div>
+                                        <div class="output-card-url">{escape(absolute_url(face['url']))}</div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+                                st.download_button(
+                                    "Download crop",
+                                    data=crop_bytes,
+                                    file_name=face["filename"],
+                                    mime="image/png",
+                                    key=f"download_crop_{face['output_index']}_{face['filename']}",
+                                    use_container_width=True,
+                                )
+                            st.divider()
 
 with tab_history:
     try:
