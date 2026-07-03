@@ -417,7 +417,7 @@ def detect_faces_by_range(
     detection_thresholds: dict,
 ):
     if detection_range == "balanced":
-        model_ranges = ("full_range", "short_range")
+        model_ranges = ("short_range", "full_range")
     else:
         model_ranges = (detection_range,)
 

@@ -796,7 +796,7 @@ st.sidebar.markdown(
     <div class="account-panel">
         <div class="account-kicker">Detection strategy</div>
         <div class="account-title">{BEST_DETECTION_LABEL}</div>
-        <div class="account-copy">Runs full-range and short-range MediaPipe detection, then merges duplicates by confidence.</div>
+        <div class="account-copy">Runs short-range then full-range MediaPipe detection, then merges duplicates by confidence.</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1047,7 +1047,7 @@ with tab_workspace:
                     )
                 metric_items.extend(
                     [
-                        "short + full",
+                        "short then full",
                         "confidence sorted",
                         f"{detection_result['image_width']} x {detection_result['image_height']}",
                         detection_result["storage_provider"],

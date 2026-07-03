@@ -156,7 +156,7 @@ crop_scale
 shoulder_bias
 ```
 
-The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: one full-range MediaPipe BlazeFace pass plus one short-range MediaPipe BlazeFace pass on the original image. The backend then merges duplicate detections and keeps the candidate list sorted by confidence.
+The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: one short-range MediaPipe BlazeFace pass first, then one full-range MediaPipe BlazeFace pass on the original image. The backend then merges duplicate detections and keeps the candidate list sorted by confidence.
 
 Tile-based small-face scanning is not part of the default workflow. It was removed from the automatic path because it costs more compute, can split faces near tile boundaries, and adds extra tuning complexity. Very low-resolution distant photos where each face is only a few pixels wide can still hit the BlazeFace model limit, so they are not used as the default tuning target.
 
