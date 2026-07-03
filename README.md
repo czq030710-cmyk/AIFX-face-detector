@@ -158,13 +158,14 @@ shoulder_bias
 
 The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: balanced full-plus-short detection with `small_face_scan` allowed. The backend decides whether the extra small-face pass is needed, so normal close-up photos do not get the noisy tiled scan.
 
-`small_face_scan` can run an extra overlapping tile pass with the short-range model. It runs when the base detection finds no faces, or when all detected faces are small relative to the image. It helps when a full-body group photo is only a few hundred pixels wide and each face becomes extremely small after whole-image resizing. Normal full-body photos also get crop-region duplicate filtering so one person is less likely to produce several shifted boxes.
+`small_face_scan` can run an extra overlapping tile pass with the short-range BlazeFace model. It runs when the backend sees a wide group image, a sparse background-face image, or otherwise small detected faces. The default is calibrated for usable-resolution group photos and background faces. Very low-resolution distant photos where each face is only a few pixels wide can still hit the BlazeFace model limit, so they are not used as the default tuning target.
 
 How to tune the two model thresholds:
 
 - Lower `Distant-face sensitivity` first when small or distant faces are missing.
 - Lower `Close-face sensitivity` when close faces are still missing.
 - Raise `Close-face sensitivity` if large nearby faces create too many obvious false positives.
+- For extremely low-resolution distant images, try a higher-resolution source image instead of pushing the default thresholds too low.
 
 The confidence controls use `0.01` increments. Suggested values:
 

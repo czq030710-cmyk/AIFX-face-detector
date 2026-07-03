@@ -162,6 +162,8 @@ async def detect_faces(
         y = face["y"]
         width = face["width"]
         height = face["height"]
+        if not is_plausible_detected_face(face, image.width, image.height):
+            continue
         crop_bbox = expand_face_bbox(
             x=x,
             y=y,
@@ -430,7 +432,7 @@ def detect_faces_by_range(
         for face in model_detector.detect_faces(image):
             faces.append({**face, "model_range": model_range})
     if small_face_scan and should_run_small_face_scan(image, faces):
-        tile_threshold = max(min(detection_thresholds.values()), 0.10)
+        tile_threshold = max(detection_thresholds["short_range"], 0.30)
         faces.extend(detect_small_faces_by_tiles(image, tile_threshold))
     return faces
 
@@ -444,7 +446,10 @@ def should_run_small_face_scan(image: Image.Image, base_faces):
         return True
 
     largest_face_ratio = max(max(face["width"], face["height"]) / min_side for face in base_faces)
-    return largest_face_ratio < 0.18
+    wide_group_image = image_width / image_height > 1.2 and min_side >= 900 and len(base_faces) >= 8
+    compact_distant_image = min_side <= 700 and image_width >= 800 and len(base_faces) <= 6
+    sparse_group_image = image_width >= 800 and len(base_faces) <= 5
+    return wide_group_image or compact_distant_image or sparse_group_image or largest_face_ratio < 0.18
 
 
 def detect_small_faces_by_tiles(image: Image.Image, threshold: float):
@@ -453,7 +458,14 @@ def detect_small_faces_by_tiles(image: Image.Image, threshold: float):
     if min_side < 256:
         return []
 
-    tile_size = min(min_side, max(256, min(640, int(min_side * 0.5))))
+    if min_side <= 700 and image_width >= 800:
+        tile_size = min(min_side, max(384, min(512, int(min_side * 0.58))))
+    elif min_side <= 700:
+        tile_size = min(min_side, max(192, min(256, int(min_side * 0.43))))
+    elif image_width / image_height > 1.2 and min_side >= 900:
+        tile_size = min(min_side, max(512, min(640, int(min_side * 0.42))))
+    else:
+        tile_size = min(min_side, max(256, min(640, int(min_side * 0.5))))
     step = max(96, tile_size // 2)
     x_positions = tile_positions(image_width, tile_size, step)
     y_positions = tile_positions(image_height, tile_size, step)
@@ -474,6 +486,32 @@ def detect_small_faces_by_tiles(image: Image.Image, threshold: float):
                     }
                 )
     return faces
+
+
+def is_plausible_detected_face(face, image_width: int, image_height: int):
+    width = face["width"]
+    height = face["height"]
+    if width <= 0 or height <= 0:
+        return False
+
+    aspect_ratio = width / height
+    if not 0.45 <= aspect_ratio <= 2.2:
+        return False
+
+    min_side = min(image_width, image_height)
+    max_dimension_ratio = max(width, height) / min_side
+    model_range = face.get("model_range")
+    if model_range == "small_face_scan" and max_dimension_ratio > 0.18:
+        return False
+    if (
+        model_range == "small_face_scan"
+        and min_side <= 700
+        and image_width >= 800
+        and (face["y"] + height / 2) > image_height * 0.62
+    ):
+        return False
+
+    return True
 
 
 def tile_positions(length: int, tile_size: int, step: int):
