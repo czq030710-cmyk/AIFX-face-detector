@@ -192,6 +192,7 @@ Parameter meanings:
 The backend also applies a second filtering pass after the model returns candidate faces:
 
 - Duplicate model detections are suppressed using the smaller detected face boxes, not the expanded crop boxes.
+- Very large, low-confidence detections are rejected before crop expansion so background patterns do not become full-image crop candidates.
 - Remaining candidates are sorted from highest to lowest confidence before being numbered in the UI.
 - Low-confidence candidates are kept so difficult or distant faces can still be reviewed manually.
 
@@ -266,6 +267,34 @@ Bounding boxes are stored in original image pixel coordinates. Each face include
   }
 }
 ```
+
+## ComfyUI Handoff
+
+After `POST /crop-selected`, the selected crops are ready to recall from task history:
+
+- `cropped_image_urls`: array of saved crop image URLs.
+- `bounding_boxes`: array of metadata for each saved crop.
+- `bounding_boxes[].crop_bbox`: the exact original-image coordinates used for the saved crop.
+- `bounding_boxes[].face_bbox`: the smaller model-detected face coordinates.
+- `bounding_boxes[].output_index`: matches the crop order in `cropped_image_urls`.
+
+In Supabase, query the latest completed row:
+
+```sql
+select
+  task_id,
+  original_image_url,
+  cropped_image_urls,
+  bounding_boxes,
+  settings,
+  created_at
+from public.task_history
+where user_id = auth.uid()
+order by created_at desc
+limit 1;
+```
+
+For a ComfyUI workflow, pass the selected `cropped_image_urls[n]` as the image input URL. If the workflow also needs coordinates, pass the matching `bounding_boxes[n].crop_bbox` JSON. In local demo mode, use `GET /tasks?limit=10` and convert relative crop URLs such as `/storage/crops/...png` into `http://127.0.0.1:8000/storage/crops/...png`.
 
 ## Day 3 Completion Notes
 

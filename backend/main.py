@@ -440,6 +440,21 @@ def is_plausible_detected_face(face, image_width: int, image_height: int):
     if not 0.45 <= aspect_ratio <= 2.2:
         return False
 
+    min_side = min(image_width, image_height)
+    max_dimension_ratio = max(width, height) / min_side
+    confidence = face.get("score", 0.0)
+    if confidence < 0.45 and max_dimension_ratio > 0.35:
+        return False
+    if confidence < 0.35 and max_dimension_ratio > 0.20:
+        touches_image_edge = (
+            face["x"] <= 1
+            or face["y"] <= 1
+            or face["x"] + width >= image_width - 1
+            or face["y"] + height >= image_height - 1
+        )
+        if touches_image_edge:
+            return False
+
     return True
 
 
