@@ -7,16 +7,17 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Face detection core is implemented in `core_ai/face_detector.py`.
 - The local detector uses official MediaPipe BlazeFace model files with OpenCV DNN inference for macOS stability.
 - The detection API supports `short_range`, `full_range`, and `balanced`, while the frontend automatically uses the best recall-first `balanced` strategy.
-- `balanced` mode keeps useful lower-confidence candidates and removes obvious duplicate face or crop regions, so the user can manually choose the true faces before cropping.
+- `balanced` mode runs both MediaPipe ranges on the original image, removes duplicate face or crop regions, and sorts candidates by confidence so the user can manually choose the true faces before cropping.
 - FastAPI provides `/health`, `/detect-faces`, and `/crop-selected`.
 - Streamlit provides an AIFX Studio-style upload workspace with a detect-first, select-then-crop flow.
-- The workspace shows a three-step flow, clearer empty states, selectable face cards, and readable saved-output rows.
+- The workspace shows a compact detect-first flow with selectable face rows inside a fixed-height scroll panel.
 - The Streamlit sidebar has separate linked slider-plus-number controls for distant-face and close-face sensitivity.
-- Small-face scanning is enabled by the frontend but only runs when the backend sees that the image needs a distant-face pass.
+- The frontend no longer uses tile-based small-face scanning by default; detection stays on the original image for simpler tuning and lower compute cost.
 - The login-first page has an Apple-like animated product layout with glass styling and a reduced-motion fallback.
 - Crop expansion and vertical offset are hidden inside the `Crop box tuning` expander until portrait framing needs adjustment.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked before saving crops.
 - Green boxes show the proposed crop regions on the original image.
+- The right-side detected-face list scrolls internally when many faces are found, so the main workspace stays short.
 - Day 2 local storage flow is in place: uploaded originals and cropped faces are saved under `storage/` and returned as local URLs.
 - Cropped face files are saved only after the user selects one or more detected faces and starts the crop step.
 - Day 3 auth/storage/history flow is implemented.
@@ -139,7 +140,7 @@ Hover over a control label in the frontend to see a short explanation of what th
 Default recommended preset:
 
 - Detection strategy: `Balanced recall`, applied automatically.
-- `Distant-face sensitivity`: `0.20`
+- `Distant-face sensitivity`: `0.15`
 - `Close-face sensitivity`: `0.23`
 - `Crop expansion`: `2.20`
 - `Vertical offset`: `0.20`
@@ -149,16 +150,15 @@ The values are sent to `POST /detect-faces` as:
 ```text
 min_detection_confidence
 detection_range
-small_face_scan
 full_range_confidence
 short_range_confidence
 crop_scale
 shoulder_bias
 ```
 
-The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: balanced full-plus-short detection with `small_face_scan` allowed. The backend decides whether the extra small-face pass is needed, so normal close-up photos do not get the noisy tiled scan.
+The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: one full-range MediaPipe BlazeFace pass plus one short-range MediaPipe BlazeFace pass on the original image. The backend then merges duplicate detections and keeps the candidate list sorted by confidence.
 
-`small_face_scan` can run an extra overlapping tile pass with the short-range BlazeFace model. It runs when the backend sees a wide group image, a sparse background-face image, or otherwise small detected faces. The default is calibrated for usable-resolution group photos and background faces. Very low-resolution distant photos where each face is only a few pixels wide can still hit the BlazeFace model limit, so they are not used as the default tuning target.
+Tile-based small-face scanning is not part of the default workflow. It was removed from the automatic path because it costs more compute, can split faces near tile boundaries, and adds extra tuning complexity. Very low-resolution distant photos where each face is only a few pixels wide can still hit the BlazeFace model limit, so they are not used as the default tuning target.
 
 How to tune the two model thresholds:
 
@@ -183,7 +183,6 @@ Crop controls:
 Parameter meanings:
 
 - `detection_range`: set by the frontend to `balanced`.
-- `small_face_scan`: set by the frontend to `true`, then applied by the backend only when the image needs the extra small-face pass.
 - `full_range_confidence`: exposed as `Distant-face sensitivity`.
 - `short_range_confidence`: exposed as `Close-face sensitivity`.
 - `min_detection_confidence`: legacy fallback used only if the model-specific confidence values are not provided.
@@ -193,6 +192,7 @@ Parameter meanings:
 The backend also applies a second filtering pass after the model returns candidate faces:
 
 - Duplicate model detections are suppressed using the smaller detected face boxes, not the expanded crop boxes.
+- Remaining candidates are sorted from highest to lowest confidence before being numbered in the UI.
 - Low-confidence candidates are kept so difficult or distant faces can still be reviewed manually.
 
 The API now runs in two stages:
@@ -224,7 +224,6 @@ Saved file naming:
 - `storage_provider`
 - `min_detection_confidence`
 - `detection_range`
-- `small_face_scan`
 - `full_range_confidence`
 - `short_range_confidence`
 - `crop_scale`

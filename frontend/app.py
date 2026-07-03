@@ -1,5 +1,4 @@
 import os
-import base64
 from html import escape
 from io import BytesIO
 
@@ -11,9 +10,8 @@ import streamlit as st
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 BEST_DETECTION_RANGE = "balanced"
 BEST_DETECTION_LABEL = "Balanced recall"
-BEST_SMALL_FACE_SCAN = True
-CONTROL_DEFAULTS_VERSION = 2
-DEFAULT_FULL_RANGE_CONFIDENCE = 0.20
+CONTROL_DEFAULTS_VERSION = 3
+DEFAULT_FULL_RANGE_CONFIDENCE = 0.15
 DEFAULT_SHORT_RANGE_CONFIDENCE = 0.23
 
 
@@ -461,12 +459,17 @@ st.markdown(
         font-size: 0.82rem;
         font-variant-numeric: tabular-nums;
     }
+    .face-list-note {
+        color: #9EA6B5;
+        font-size: 0.82rem;
+        margin: 0 0 8px;
+    }
     .face-card {
         border: 1px solid rgba(255, 255, 255, 0.09);
         border-radius: 8px;
-        padding: 12px;
+        padding: 10px 11px;
         background: rgba(0, 0, 0, 0.32);
-        margin-bottom: 10px;
+        margin-bottom: 8px;
         transition: border-color 160ms ease, background-color 160ms ease;
     }
     .face-card:hover {
@@ -476,6 +479,13 @@ st.markdown(
     .face-card strong {
         color: #FFFFFF;
         letter-spacing: 1px;
+    }
+    .face-meta {
+        color: #AAB2C1;
+        font-size: 0.78rem;
+        line-height: 1.45;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
     }
     .muted {
         color: #9399A6;
@@ -846,7 +856,7 @@ st.sidebar.markdown(
     <div class="account-panel">
         <div class="account-kicker">Detection strategy</div>
         <div class="account-title">{BEST_DETECTION_LABEL}</div>
-        <div class="account-copy">Runs the best recall-first pipeline automatically, with small-face scanning only when the image needs it.</div>
+        <div class="account-copy">Runs full-range and short-range MediaPipe detection, then merges duplicates by confidence.</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1070,7 +1080,6 @@ with tab_workspace:
                         "detection_range": BEST_DETECTION_RANGE,
                         "full_range_confidence": st.session_state.full_range_confidence,
                         "short_range_confidence": st.session_state.short_range_confidence,
-                        "small_face_scan": BEST_SMALL_FACE_SCAN,
                         "crop_scale": st.session_state.crop_scale,
                         "shoulder_bias": st.session_state.shoulder_bias,
                     }
@@ -1111,7 +1120,8 @@ with tab_workspace:
                     )
                 metric_items.extend(
                     [
-                        "small scan on" if detection_result.get("small_face_scan") else "small scan off",
+                        "short + full",
+                        "confidence sorted",
                         f"{detection_result['image_width']} x {detection_result['image_height']}",
                         detection_result["storage_provider"],
                     ]
@@ -1133,32 +1143,30 @@ with tab_workspace:
                     for face in faces:
                         st.session_state[f"select_face_{face['face_index']}"] = True
 
-                for face in faces:
-                    face_bbox = face["face_bbox"]
-                    crop_bbox = face["crop_bbox"]
-                    st.markdown('<div class="face-card">', unsafe_allow_html=True)
-                    preview_col, detail_col = st.columns([0.28, 0.72])
-                    with preview_col:
-                        st.image(
-                            BytesIO(base64.b64decode(face["preview_base64"])),
-                            caption=f"ID {face['face_index']}",
-                            width="stretch",
-                        )
-                    with detail_col:
+                st.markdown(
+                    f'<div class="face-list-note">{len(faces)} candidates sorted by confidence. Scroll this list only.</div>',
+                    unsafe_allow_html=True,
+                )
+                face_list = st.container(height=430, border=True)
+                with face_list:
+                    for face in faces:
+                        face_bbox = face["face_bbox"]
+                        crop_bbox = face["crop_bbox"]
+                        st.markdown('<div class="face-card">', unsafe_allow_html=True)
                         st.checkbox(
                             f"Face {face['face_index']} · confidence {face_bbox['confidence']:.2f}",
                             key=f"select_face_{face['face_index']}",
                         )
-                        st.caption(
-                            f"crop x={crop_bbox['x_min']} y={crop_bbox['y_min']} "
-                            f"w={crop_bbox['width']} h={crop_bbox['height']}"
+                        st.markdown(
+                            f"""
+                            <div class="face-meta">
+                                crop x={crop_bbox['x_min']} y={crop_bbox['y_min']} w={crop_bbox['width']} h={crop_bbox['height']}<br>
+                                face x={face_bbox['x_min']} y={face_bbox['y_min']} w={face_bbox['width']} h={face_bbox['height']} · {escape(face_bbox.get('model_range', 'unknown'))}
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
                         )
-                        st.caption(
-                            f"face x={face_bbox['x_min']} y={face_bbox['y_min']} "
-                            f"w={face_bbox['width']} h={face_bbox['height']} "
-                            f"model={face_bbox.get('model_range', 'unknown')}"
-                        )
-                    st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
 
                 selected_indices = selected_face_indices(faces)
                 selected_count = len(selected_indices)
@@ -1190,16 +1198,18 @@ with tab_workspace:
                             st.success(crop_result["message"])
                 if st.session_state.get("crop_result"):
                     st.markdown('<div class="panel-title">Saved Output</div>', unsafe_allow_html=True)
-                    for face in st.session_state.crop_result.get("faces", []):
-                        st.markdown(
-                            f"""
-                            <div class="output-line">
-                                <strong>{escape(face['filename'])}</strong><br>
-                                {escape(absolute_url(face['url']))}
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+                    output_list = st.container(height=180, border=True)
+                    with output_list:
+                        for face in st.session_state.crop_result.get("faces", []):
+                            st.markdown(
+                                f"""
+                                <div class="output-line">
+                                    <strong>{escape(face['filename'])}</strong><br>
+                                    {escape(absolute_url(face['url']))}
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
 
 with tab_history:
     try:
