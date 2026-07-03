@@ -416,28 +416,18 @@ st.markdown(
         font-size: 0.82rem;
         margin: 0 0 8px;
     }
-    .face-card {
-        border: 1px solid rgba(255, 255, 255, 0.09);
-        border-radius: 8px;
-        padding: 10px;
-        background: rgba(0, 0, 0, 0.32);
-        margin-bottom: 8px;
-        transition: border-color 160ms ease, background-color 160ms ease;
-    }
-    .face-card:hover {
-        border-color: rgba(110, 168, 255, 0.35);
-        background: rgba(255,255,255,0.045);
-    }
-    .face-card strong {
-        color: #FFFFFF;
-        letter-spacing: 1px;
-    }
     .face-preview img {
         border-radius: 8px;
         border: 1px solid rgba(255,255,255,0.10);
         background: rgba(255,255,255,0.04);
         aspect-ratio: 1 / 1;
         object-fit: cover;
+    }
+    .face-title {
+        color: #F5F5F7;
+        font-size: 0.98rem;
+        font-weight: 760;
+        margin: 0 0 5px;
     }
     .face-meta {
         color: #AAB2C1;
@@ -1087,30 +1077,33 @@ with tab_workspace:
                     for face in faces:
                         face_bbox = face["face_bbox"]
                         crop_bbox = face["crop_bbox"]
-                        st.markdown('<div class="face-card">', unsafe_allow_html=True)
-                        preview_col, detail_col = st.columns([0.34, 0.66], gap="small")
-                        with preview_col:
-                            preview_bytes = base64.b64decode(face["preview_base64"])
-                            st.image(
-                                BytesIO(preview_bytes),
-                                caption=f"Crop {face['face_index']}",
-                                width="stretch",
-                            )
-                        with detail_col:
-                            st.checkbox(
-                                f"Face {face['face_index']} · confidence {face_bbox['confidence']:.2f}",
-                                key=f"select_face_{face['face_index']}",
-                            )
-                            st.markdown(
-                                f"""
-                                <div class="face-meta">
-                                    crop x={crop_bbox['x_min']} y={crop_bbox['y_min']} w={crop_bbox['width']} h={crop_bbox['height']}<br>
-                                    face x={face_bbox['x_min']} y={face_bbox['y_min']} w={face_bbox['width']} h={face_bbox['height']} · {escape(face_bbox.get('model_range', 'unknown'))}
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-                        st.markdown("</div>", unsafe_allow_html=True)
+                        with st.container(border=True):
+                            preview_col, detail_col = st.columns([0.36, 0.64], gap="small")
+                            with preview_col:
+                                preview_bytes = base64.b64decode(face["preview_base64"])
+                                st.image(
+                                    BytesIO(preview_bytes),
+                                    width="stretch",
+                                )
+                            with detail_col:
+                                st.markdown(
+                                    f'<div class="face-title">Crop {face["face_index"]}</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                st.checkbox(
+                                    "Select this crop",
+                                    key=f"select_face_{face['face_index']}",
+                                )
+                                with st.expander("Coordinates", expanded=False):
+                                    st.markdown(
+                                        f"""
+                                        <div class="face-meta">
+                                            crop x={crop_bbox['x_min']} y={crop_bbox['y_min']} w={crop_bbox['width']} h={crop_bbox['height']}<br>
+                                            face x={face_bbox['x_min']} y={face_bbox['y_min']} w={face_bbox['width']} h={face_bbox['height']} · confidence {face_bbox['confidence']:.2f} · {escape(face_bbox.get('model_range', 'unknown'))}
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True,
+                                    )
 
                 selected_indices = selected_face_indices(faces)
                 selected_count = len(selected_indices)
