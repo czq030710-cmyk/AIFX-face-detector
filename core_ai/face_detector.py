@@ -9,12 +9,17 @@ class FaceDetector:
     def __init__(
         self,
         min_detection_confidence=0.5,
+        min_suppression_threshold=0.3,
+        delegate="cpu",
         model_path=None,
         model_range="full_range",
         input_size=None,
     ):
         """初始化人脸检测器，使用 MediaPipe 官方 BlazeFace 模型。"""
         self.min_detection_confidence = min_detection_confidence
+        self.min_suppression_threshold = min_suppression_threshold
+        self.delegate = delegate
+        self.effective_delegate = "cpu"
         models_dir = Path(__file__).with_name("models")
         if model_path is None:
             default_model_path = models_dir / f"blaze_face_{model_range}.tflite"
@@ -34,6 +39,22 @@ class FaceDetector:
         self.output_names = self.net.getUnconnectedOutLayersNames()
         self.score_output_name, self.box_output_name = self._resolve_output_names()
         self.anchors = self._generate_anchors()
+        self.set_delegate(delegate)
+
+    def set_delegate(self, delegate: str):
+        self.delegate = delegate
+        if delegate == "gpu":
+            try:
+                self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+                self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_OPENCL_FP16)
+                self.effective_delegate = "gpu"
+                return
+            except cv2.error:
+                pass
+
+        self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        self.effective_delegate = "cpu"
 
     def detect_faces(self, image: Image.Image):
         """输入 PIL 图片，返回检测到的人脸绝对像素坐标"""
@@ -49,7 +70,14 @@ class FaceDetector:
             crop=False,
         )
         self.net.setInput(blob)
-        outputs = dict(zip(self.output_names, self.net.forward(self.output_names)))
+        try:
+            outputs = dict(zip(self.output_names, self.net.forward(self.output_names)))
+        except cv2.error:
+            if self.delegate != "gpu":
+                raise
+            self.set_delegate("cpu")
+            self.net.setInput(blob)
+            outputs = dict(zip(self.output_names, self.net.forward(self.output_names)))
 
         raw_scores = outputs[self.score_output_name][0, :, 0]
         raw_boxes = outputs[self.box_output_name][0]
@@ -84,7 +112,7 @@ class FaceDetector:
             boxes,
             scores,
             score_threshold=self.min_detection_confidence,
-            nms_threshold=0.3,
+            nms_threshold=self.min_suppression_threshold,
         )
 
         faces = []

@@ -11,9 +11,10 @@ import streamlit as st
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 BEST_DETECTION_RANGE = "balanced"
 BEST_DETECTION_LABEL = "Balanced recall"
-CONTROL_DEFAULTS_VERSION = 4
+CONTROL_DEFAULTS_VERSION = 5
 DEFAULT_FULL_RANGE_CONFIDENCE = 0.10
 DEFAULT_SHORT_RANGE_CONFIDENCE = 0.23
+DEFAULT_SUPPRESSION_THRESHOLD = 0.30
 
 
 st.set_page_config(page_title="AIFX Face Processing", layout="wide")
@@ -738,6 +739,9 @@ def init_control_defaults():
     st.session_state.short_range_confidence = DEFAULT_SHORT_RANGE_CONFIDENCE
     st.session_state.short_range_confidence_slider = DEFAULT_SHORT_RANGE_CONFIDENCE
     st.session_state.short_range_confidence_input = DEFAULT_SHORT_RANGE_CONFIDENCE
+    st.session_state.min_suppression_threshold = DEFAULT_SUPPRESSION_THRESHOLD
+    st.session_state.min_suppression_threshold_slider = DEFAULT_SUPPRESSION_THRESHOLD
+    st.session_state.min_suppression_threshold_input = DEFAULT_SUPPRESSION_THRESHOLD
     st.session_state.control_defaults_version = CONTROL_DEFAULTS_VERSION
 
 
@@ -749,6 +753,7 @@ def init_control_state(name, default, minimum, maximum):
 init_control_defaults()
 init_control_state("full_range_confidence", DEFAULT_FULL_RANGE_CONFIDENCE, 0.01, 0.99)
 init_control_state("short_range_confidence", DEFAULT_SHORT_RANGE_CONFIDENCE, 0.01, 0.99)
+init_control_state("min_suppression_threshold", DEFAULT_SUPPRESSION_THRESHOLD, 0.01, 0.99)
 init_control_state("crop_scale", 2.2, 1.0, 5.0)
 init_control_state("shoulder_bias", 0.2, -1.5, 1.5)
 
@@ -775,6 +780,18 @@ def sync_short_range_confidence_input():
     value = clamp_value(st.session_state.short_range_confidence_input, 0.01, 0.99)
     st.session_state.short_range_confidence = value
     st.session_state.short_range_confidence_slider = value
+
+
+def sync_min_suppression_threshold_slider():
+    value = clamp_value(st.session_state.min_suppression_threshold_slider, 0.01, 0.99)
+    st.session_state.min_suppression_threshold = value
+    st.session_state.min_suppression_threshold_input = value
+
+
+def sync_min_suppression_threshold_input():
+    value = clamp_value(st.session_state.min_suppression_threshold_input, 0.01, 0.99)
+    st.session_state.min_suppression_threshold = value
+    st.session_state.min_suppression_threshold_slider = value
 
 
 def sync_crop_scale_slider():
@@ -879,6 +896,18 @@ linked_slider_number(
     help_text=(
         "Lower this when large close faces are missing. "
         "Raise it if the result has too many obvious false positives."
+    ),
+)
+linked_slider_number(
+    "Min Suppression Threshold",
+    "min_suppression_threshold",
+    0.01,
+    0.99,
+    sync_min_suppression_threshold_slider,
+    sync_min_suppression_threshold_input,
+    help_text=(
+        "Controls how strongly overlapping detections are merged. "
+        "Lower values remove more duplicate boxes; higher values keep more nearby boxes."
     ),
 )
 
@@ -1045,6 +1074,8 @@ with tab_workspace:
                         "detection_range": BEST_DETECTION_RANGE,
                         "full_range_confidence": st.session_state.full_range_confidence,
                         "short_range_confidence": st.session_state.short_range_confidence,
+                        "min_suppression_threshold": st.session_state.min_suppression_threshold,
+                        "delegate": "gpu",
                         "crop_scale": st.session_state.crop_scale,
                         "shoulder_bias": st.session_state.shoulder_bias,
                     }

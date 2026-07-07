@@ -134,6 +134,7 @@ The frontend exposes controls for the main detection and crop parameters:
 
 - `Distant-face sensitivity`
 - `Close-face sensitivity`
+- `Min Suppression Threshold`
 - `Crop expansion` under `Crop box tuning`
 - `Vertical offset` under `Crop box tuning`
 
@@ -145,6 +146,7 @@ Default recommended preset, tuned against the local `Downloads/test picture` set
 - Detection strategy: `Balanced recall`, applied automatically.
 - `Distant-face sensitivity`: `0.10`
 - `Close-face sensitivity`: `0.23`
+- `Min Suppression Threshold`: `0.30`
 - `Crop expansion`: `2.20`
 - `Vertical offset`: `0.20`
 
@@ -155,9 +157,13 @@ min_detection_confidence
 detection_range
 full_range_confidence
 short_range_confidence
+min_suppression_threshold
+delegate
 crop_scale
 shoulder_bias
 ```
+
+The frontend does not show a GPU/CPU selector. It sends `delegate=gpu` by default, matching the preferred accelerated setting in the official MediaPipe sample UI. The backend attempts OpenCV DNN GPU/OpenCL execution and automatically falls back to CPU if the current machine or OpenCV build cannot use it.
 
 The frontend no longer asks the user to choose a model. It always sends the backend's `Balanced recall` strategy: one short-range MediaPipe BlazeFace pass first, then one full-range MediaPipe BlazeFace pass on the original image. For large images, the backend also runs a light 2x2 overlapping full-range tile scan. This still uses the same MediaPipe BlazeFace model family; it only gives distant faces a larger local view before merging duplicates.
 
@@ -189,6 +195,8 @@ Parameter meanings:
 - `full_range_confidence`: exposed as `Distant-face sensitivity`.
 - `short_range_confidence`: exposed as `Close-face sensitivity`.
 - `min_detection_confidence`: legacy fallback used only if the model-specific confidence values are not provided.
+- `min_suppression_threshold`: controls how aggressively overlapping raw model detections are merged by NMS before the review list is built.
+- `delegate`: hidden frontend value, currently sent as `gpu` by default.
 - `crop_scale`: how large the final square crop is around the detected face.
 - `shoulder_bias`: vertical crop offset. Negative values move the crop upward, `0` keeps it centered, and positive values move it downward to include more shoulders.
 

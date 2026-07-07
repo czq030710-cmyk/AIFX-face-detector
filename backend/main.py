@@ -21,8 +21,8 @@ from backend.supabase_client import SupabaseGateway, UserContext
 
 app = FastAPI(title="AIFX Phase 1 Face Processing API")
 DETECTORS = {
-    "short_range": FaceDetector(model_range="short_range"),
-    "full_range": FaceDetector(model_range="full_range"),
+    "short_range": FaceDetector(model_range="short_range", delegate="gpu"),
+    "full_range": FaceDetector(model_range="full_range", delegate="gpu"),
 }
 TILE_SCAN_ENABLED = True
 TILE_SCAN_GRID = "2x2"
@@ -324,6 +324,8 @@ async def detect_faces(
     detection_range: str = Form("balanced"),
     full_range_confidence: float | None = Form(None),
     short_range_confidence: float | None = Form(None),
+    min_suppression_threshold: float = Form(0.3),
+    delegate: str = Form("gpu"),
     crop_scale: float = Form(2.2),
     shoulder_bias: float = Form(0.2),
     user: UserContext = Depends(get_current_user),
@@ -336,6 +338,10 @@ async def detect_faces(
         raise HTTPException(status_code=400, detail="full_range_confidence must be between 0.0 and 1.0.")
     if short_range_confidence is not None and not 0.0 <= short_range_confidence <= 1.0:
         raise HTTPException(status_code=400, detail="short_range_confidence must be between 0.0 and 1.0.")
+    if not 0.0 <= min_suppression_threshold <= 1.0:
+        raise HTTPException(status_code=400, detail="min_suppression_threshold must be between 0.0 and 1.0.")
+    if delegate not in {"cpu", "gpu"}:
+        raise HTTPException(status_code=400, detail="delegate must be cpu or gpu.")
     if detection_range not in {"short_range", "full_range", "balanced"}:
         raise HTTPException(
             status_code=400,
@@ -376,7 +382,13 @@ async def detect_faces(
         full_range_confidence=full_range_confidence,
         short_range_confidence=short_range_confidence,
     )
-    faces = detect_faces_by_range(image, detection_range, detection_thresholds)
+    faces = detect_faces_by_range(
+        image,
+        detection_range,
+        detection_thresholds,
+        min_suppression_threshold,
+        delegate,
+    )
     detected_faces = []
     bounding_boxes = []
 
@@ -457,6 +469,8 @@ async def detect_faces(
             "detection_range": detection_range,
             "full_range_confidence": detection_thresholds["full_range"],
             "short_range_confidence": detection_thresholds["short_range"],
+            "min_suppression_threshold": min_suppression_threshold,
+            "delegate": delegate,
             "tile_scan_enabled": detection_range == "balanced" and should_run_tile_scan(image),
             "tile_scan_grid": TILE_SCAN_GRID,
             "tile_scan_tile_ratio": TILE_SCAN_TILE_RATIO,
@@ -488,6 +502,8 @@ async def detect_faces(
         "detection_range": detection_range,
         "full_range_confidence": detection_thresholds["full_range"],
         "short_range_confidence": detection_thresholds["short_range"],
+        "min_suppression_threshold": min_suppression_threshold,
+        "delegate": delegate,
         "tile_scan_enabled": detection_range == "balanced" and should_run_tile_scan(image),
         "tile_scan_grid": TILE_SCAN_GRID,
         "crop_scale": crop_scale,
@@ -645,6 +661,8 @@ def detect_faces_by_range(
     image: Image.Image,
     detection_range: str,
     detection_thresholds: dict,
+    min_suppression_threshold: float,
+    delegate: str,
 ):
     if detection_range == "balanced":
         model_ranges = ("short_range", "full_range")
@@ -655,11 +673,20 @@ def detect_faces_by_range(
     for model_range in model_ranges:
         model_detector = DETECTORS[model_range]
         model_detector.min_detection_confidence = detection_thresholds[model_range]
+        model_detector.min_suppression_threshold = min_suppression_threshold
+        model_detector.set_delegate(delegate)
         for face in model_detector.detect_faces(image):
             faces.append({**face, "model_range": model_range})
 
     if detection_range == "balanced" and should_run_tile_scan(image):
-        faces.extend(detect_faces_with_tile_scan(image, detection_thresholds["full_range"]))
+        faces.extend(
+            detect_faces_with_tile_scan(
+                image,
+                detection_thresholds["full_range"],
+                min_suppression_threshold,
+                delegate,
+            )
+        )
     return faces
 
 
@@ -667,10 +694,19 @@ def should_run_tile_scan(image: Image.Image):
     return TILE_SCAN_ENABLED and min(image.width, image.height) >= TILE_SCAN_MIN_SIDE
 
 
-def detect_faces_with_tile_scan(image: Image.Image, min_detection_confidence: float):
+def detect_faces_with_tile_scan(
+    image: Image.Image,
+    min_detection_confidence: float,
+    min_suppression_threshold: float,
+    delegate: str,
+):
     detector = DETECTORS["full_range"]
     previous_confidence = detector.min_detection_confidence
+    previous_suppression = detector.min_suppression_threshold
+    previous_delegate = detector.delegate
     detector.min_detection_confidence = min_detection_confidence
+    detector.min_suppression_threshold = min_suppression_threshold
+    detector.set_delegate(delegate)
     faces = []
     try:
         for tile_index, (tile_x, tile_y, tile_width, tile_height) in enumerate(tile_scan_boxes(image)):
@@ -687,6 +723,8 @@ def detect_faces_with_tile_scan(image: Image.Image, min_detection_confidence: fl
                 )
     finally:
         detector.min_detection_confidence = previous_confidence
+        detector.min_suppression_threshold = previous_suppression
+        detector.set_delegate(previous_delegate)
     return faces
 
 
