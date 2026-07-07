@@ -1,9 +1,12 @@
 from base64 import b64encode
+from copy import deepcopy
 from datetime import datetime, timezone
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import re
+import time
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -11,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
+from backend.comfyui_client import ComfyUIClient, ComfyUIError
 from core_ai.face_detector import FaceDetector
 from backend.supabase_client import SupabaseGateway, UserContext
 
@@ -30,8 +34,12 @@ STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 ORIGINALS_DIR = STORAGE_DIR / "originals"
 CROPS_DIR = STORAGE_DIR / "crops"
 DETECTIONS_DIR = STORAGE_DIR / "detections"
+ENHANCED_DIR = STORAGE_DIR / "enhanced"
 LOCAL_HISTORY_PATH = STORAGE_DIR / "task_history.json"
-for directory in (ORIGINALS_DIR, CROPS_DIR, DETECTIONS_DIR):
+WORKFLOW_TEMPLATE_PATH = Path(__file__).resolve().parent / "workflows" / "zooey.json"
+LORA_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "lora_config.json"
+COMFY_OUTPUT_NODE_ID = "866"
+for directory in (ORIGINALS_DIR, CROPS_DIR, DETECTIONS_DIR, ENHANCED_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 app.mount("/storage", StaticFiles(directory=STORAGE_DIR), name="storage")
@@ -51,10 +59,117 @@ def get_current_user(authorization: str | None = Header(default=None)) -> UserCo
     return supabase_gateway.get_user_from_authorization(authorization)
 
 
+def get_phase2_user(authorization: str | None = Header(default=None)) -> UserContext:
+    configured_keys = [
+        key.strip()
+        for key in os.getenv("AIFX_PHASE2_API_KEYS", "").split(",")
+        if key.strip()
+    ]
+    if not configured_keys:
+        return get_current_user(authorization)
+
+    token = bearer_token(authorization)
+    if token not in configured_keys:
+        raise HTTPException(status_code=401, detail="Invalid Phase 2 API key.")
+    return UserContext(
+        user_id="phase2-api-key",
+        email=None,
+        access_token=token,
+        is_authenticated=True,
+    )
+
+
+def bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header must use Bearer token.")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Authorization header must use Bearer token.")
+    return token.strip()
+
+
 def safe_filename_stem(filename: str | None) -> str:
     stem = Path(filename or "upload").stem
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")
     return (stem or "upload")[:80]
+
+
+def load_json_file(path: Path) -> dict:
+    if not path.exists():
+        raise HTTPException(status_code=500, detail=f"Missing required file: {path}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"Invalid JSON file: {path}") from exc
+
+
+def load_lora_config() -> dict:
+    config = load_json_file(LORA_CONFIG_PATH)
+    if "characters" not in config or not isinstance(config["characters"], dict):
+        raise HTTPException(status_code=500, detail="lora_config.json must include a characters object.")
+    if "default_character_id" not in config:
+        raise HTTPException(status_code=500, detail="lora_config.json must include default_character_id.")
+    return config
+
+
+def resolve_character_lora(character_id: str | None) -> dict:
+    config = load_lora_config()
+    resolved_character_id = (character_id or config["default_character_id"]).strip()
+    character = config["characters"].get(resolved_character_id)
+    if not character:
+        known_characters = ", ".join(sorted(config["characters"].keys()))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown character_id '{resolved_character_id}'. Known characters: {known_characters}",
+        )
+    lora_name = character.get("lora_name")
+    if not lora_name:
+        raise HTTPException(status_code=500, detail=f"Missing lora_name for character_id '{resolved_character_id}'.")
+    return {
+        "character_id": resolved_character_id,
+        "lora_name": lora_name,
+        "display_name": character.get("display_name", resolved_character_id),
+    }
+
+
+def build_comfyui_workflow(
+    uploaded_image_filename: str,
+    lora_name: str,
+    prompt: str,
+    job_id: str,
+) -> dict:
+    workflow = deepcopy(load_json_file(WORKFLOW_TEMPLATE_PATH))
+    required_nodes = {
+        "958": "LoadImage source image",
+        "1056": "first pass LoRA",
+        "1057": "second pass LoRA",
+        "1071": "manual prompt",
+        COMFY_OUTPUT_NODE_ID: "SaveImage output",
+    }
+    missing_nodes = [
+        f"{node_id} ({label})"
+        for node_id, label in required_nodes.items()
+        if node_id not in workflow
+    ]
+    if missing_nodes:
+        raise HTTPException(status_code=500, detail=f"Workflow template is missing nodes: {missing_nodes}")
+
+    workflow["958"]["inputs"]["image"] = uploaded_image_filename
+    workflow["1056"]["inputs"]["lora_name"] = lora_name
+    workflow["1057"]["inputs"]["lora_name"] = lora_name
+    workflow["1071"]["inputs"]["text"] = prompt.strip()
+    workflow[COMFY_OUTPUT_NODE_ID]["inputs"]["filename_prefix"] = f"phase2/{job_id}"
+    return workflow
+
+
+def workflow_injection_summary(workflow: dict) -> dict:
+    return {
+        "958.inputs.image": workflow["958"]["inputs"]["image"],
+        "1056.inputs.lora_name": workflow["1056"]["inputs"]["lora_name"],
+        "1057.inputs.lora_name": workflow["1057"]["inputs"]["lora_name"],
+        "1071.inputs.text": workflow["1071"]["inputs"]["text"],
+        f"{COMFY_OUTPUT_NODE_ID}.inputs.filename_prefix": workflow[COMFY_OUTPUT_NODE_ID]["inputs"]["filename_prefix"],
+    }
 
 
 @app.get("/health")
@@ -67,6 +182,112 @@ def get_config():
     return {
         "supabase_enabled": supabase_gateway.enabled,
         "storage_provider": "supabase" if supabase_gateway.enabled else "local",
+    }
+
+
+@app.get("/api/v1/face-enhance/config")
+def get_face_enhance_config(user: UserContext = Depends(get_phase2_user)):
+    lora_config = load_lora_config()
+    return {
+        "workflow_template": str(WORKFLOW_TEMPLATE_PATH.relative_to(Path(__file__).resolve().parent.parent)),
+        "required_nodes": ["958", "1056", "1057", "1071", COMFY_OUTPUT_NODE_ID],
+        "comfyui_url": os.getenv("COMFYUI_URL", "http://127.0.0.1:8188"),
+        "default_character_id": lora_config["default_character_id"],
+        "characters": sorted(lora_config["characters"].keys()),
+        "user_id": user.user_id,
+    }
+
+
+@app.post("/api/v1/face-enhance")
+async def enhance_face_crop(
+    image: UploadFile = File(...),
+    character_id: str | None = Form(None),
+    prompt: str = Form(""),
+    dry_run: bool = Form(False),
+    user: UserContext = Depends(get_phase2_user),
+):
+    if image.content_type not in {"image/jpeg", "image/png"}:
+        raise HTTPException(status_code=400, detail="Only .jpg and .png images are supported.")
+
+    image_bytes = await image.read()
+    try:
+        source_image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    except UnidentifiedImageError as exc:
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.") from exc
+
+    png_buffer = BytesIO()
+    source_image.save(png_buffer, format="PNG")
+    upload_bytes = png_buffer.getvalue()
+
+    job_id = f"req_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
+    upload_filename = f"{job_id}_{safe_filename_stem(image.filename)}.png"
+    resolved_lora = resolve_character_lora(character_id)
+    injected_workflow = build_comfyui_workflow(
+        uploaded_image_filename=upload_filename,
+        lora_name=resolved_lora["lora_name"],
+        prompt=prompt,
+        job_id=job_id,
+    )
+
+    if dry_run:
+        return {
+            "job_id": job_id,
+            "status": "dry_run_ready",
+            "message": "Workflow template injection succeeded. ComfyUI was not called.",
+            "metadata": {
+                "workflow_template": "zooey.json",
+                "character_id": resolved_lora["character_id"],
+                "lora_name": resolved_lora["lora_name"],
+                "uploaded_image_filename": upload_filename,
+                "output_node_id": COMFY_OUTPUT_NODE_ID,
+                "injected_nodes": workflow_injection_summary(injected_workflow),
+            },
+        }
+
+    comfyui_url = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188")
+    comfyui_timeout = int(os.getenv("COMFYUI_TIMEOUT_SECONDS", "300"))
+    client = ComfyUIClient(comfyui_url, timeout_seconds=comfyui_timeout)
+    started_at = time.monotonic()
+
+    try:
+        comfyui_image_name = client.upload_image(upload_bytes, upload_filename)
+        injected_workflow = build_comfyui_workflow(
+            uploaded_image_filename=comfyui_image_name,
+            lora_name=resolved_lora["lora_name"],
+            prompt=prompt,
+            job_id=job_id,
+        )
+        prompt_id = client.submit_prompt(injected_workflow)
+        output_image = client.wait_for_output(prompt_id, COMFY_OUTPUT_NODE_ID)
+        enhanced_bytes = client.fetch_image(output_image)
+    except ComfyUIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    enhanced_filename = f"{job_id}-enhanced-crop.png"
+    enhanced_path = ENHANCED_DIR / enhanced_filename
+    enhanced_path.write_bytes(enhanced_bytes)
+    runtime_seconds = round(time.monotonic() - started_at, 2)
+
+    return {
+        "job_id": job_id,
+        "status": "completed",
+        "enhanced_crop_url": f"/storage/enhanced/{enhanced_filename}",
+        "metadata": {
+            "workflow_template": "zooey.json",
+            "comfyui_url": comfyui_url,
+            "comfyui_prompt_id": prompt_id,
+            "comfyui_output": {
+                "filename": output_image.filename,
+                "subfolder": output_image.subfolder,
+                "type": output_image.image_type,
+            },
+            "character_id": resolved_lora["character_id"],
+            "lora_name": resolved_lora["lora_name"],
+            "uploaded_image_filename": comfyui_image_name,
+            "output_node_id": COMFY_OUTPUT_NODE_ID,
+            "runtime_seconds": runtime_seconds,
+            "user_id": user.user_id,
+        },
     }
 
 

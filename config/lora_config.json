@@ -1,0 +1,11 @@
+{
+  "default_character_id": "cousin_sean",
+  "characters": {
+    "cousin_sean": {
+      "display_name": "Cousin Sean",
+      "lora_name": "Cousin_Sean-0331.safetensors",
+      "first_pass_node": "1056",
+      "second_pass_node": "1057"
+    }
+  }
+}

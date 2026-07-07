@@ -27,6 +27,8 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - If Supabase credentials are missing, the app stays usable in local demo mode and writes task history to `storage/task_history.json`.
 - The task history view shows the latest 10 tasks for the current logged-in user.
 - Saved original and crop filenames keep the uploaded image name plus a short task id, for example `abc-original-a1b2c3d4.png` and `abc-crops-01-a1b2c3d4.png`.
+- Phase 2 Day 1 is started: the backend now stores `zooey.json` as a ComfyUI workflow template, injects crop image, LoRA, prompt, and output prefix at runtime, and exposes a crop-only enhancement API.
+- Phase 2 dry-run validation passes without ComfyUI running, confirming nodes `958`, `1056`, `1057`, `1071`, and `866` are injected correctly.
 - Docker and final QA are next.
 
 ## Working Agreement
@@ -297,6 +299,71 @@ limit 1;
 ```
 
 For a ComfyUI workflow, pass the selected `cropped_image_urls[n]` as the image input URL. If the workflow also needs coordinates, pass the matching `bounding_boxes[n].crop_bbox` JSON. In local demo mode, use `GET /tasks?limit=10` and convert relative crop URLs such as `/storage/crops/...png` into `http://127.0.0.1:8000/storage/crops/...png`.
+
+## Phase 2 Face Enhancement API
+
+Phase 2 uses `backend/workflows/zooey.json` as the fixed ComfyUI API workflow template. The backend deep-copies that template for each request and injects runtime values into the plan-defined nodes:
+
+- `958.inputs.image`: uploaded cropped face filename in ComfyUI input storage.
+- `1056.inputs.lora_name`: first-pass character LoRA.
+- `1057.inputs.lora_name`: second-pass character LoRA.
+- `1071.inputs.text`: optional manual enhancement prompt.
+- `866.inputs.filename_prefix`: unique Phase 2 job prefix.
+
+Character-to-LoRA mapping lives in `config/lora_config.json`. The initial character id is:
+
+```text
+cousin_sean -> Cousin_Sean-0331.safetensors
+```
+
+Phase 2 endpoints:
+
+```text
+GET  /api/v1/face-enhance/config
+POST /api/v1/face-enhance
+```
+
+`POST /api/v1/face-enhance` accepts multipart form data:
+
+```text
+image=<cropped face image>
+character_id=cousin_sean
+prompt=optional enhancement instruction
+dry_run=true|false
+```
+
+Use `dry_run=true` when ComfyUI is not running. This validates template loading, node mapping, LoRA resolution, and request-specific injection without submitting `/prompt`.
+
+Example dry run:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/face-enhance \
+  -F image=@storage/crops/CaveaMan_v2-crops-01-522567e1.png \
+  -F character_id=cousin_sean \
+  -F prompt="natural face enhancement, realistic skin texture" \
+  -F dry_run=true
+```
+
+When ComfyUI is running, leave `dry_run=false`. The backend uploads the crop to ComfyUI `/upload/image`, submits the injected workflow to `/prompt`, polls `/history/{prompt_id}`, downloads the image from `/view`, and saves the result under `storage/enhanced/`.
+
+ComfyUI defaults:
+
+```text
+COMFYUI_URL=http://127.0.0.1:8188
+COMFYUI_TIMEOUT_SECONDS=300
+```
+
+Optional API-key protection for Phase 2:
+
+```text
+AIFX_PHASE2_API_KEYS=your-test-key
+```
+
+When `AIFX_PHASE2_API_KEYS` is set, call Phase 2 endpoints with:
+
+```text
+Authorization: Bearer your-test-key
+```
 
 ## Day 3 Completion Notes
 
