@@ -9,12 +9,22 @@ import streamlit as st
 
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+LOCAL_API_SESSION = requests.Session()
+LOCAL_API_SESSION.trust_env = False
 BEST_DETECTION_RANGE = "balanced"
 BEST_DETECTION_LABEL = "Balanced recall"
 CONTROL_DEFAULTS_VERSION = 5
 DEFAULT_FULL_RANGE_CONFIDENCE = 0.10
 DEFAULT_SHORT_RANGE_CONFIDENCE = 0.23
 DEFAULT_SUPPRESSION_THRESHOLD = 0.30
+
+
+def api_get(path, **kwargs):
+    return LOCAL_API_SESSION.get(f"{API_URL}{path}", **kwargs)
+
+
+def api_post(path, **kwargs):
+    return LOCAL_API_SESSION.post(f"{API_URL}{path}", **kwargs)
 
 
 st.set_page_config(page_title="AIFX Face Processing", layout="wide")
@@ -530,7 +540,7 @@ st.markdown(
 @st.cache_data(ttl=10)
 def load_api_config():
     try:
-        response = requests.get(f"{API_URL}/config", timeout=5)
+        response = api_get("/config", timeout=5)
         response.raise_for_status()
     except requests.RequestException as exc:
         return {
@@ -583,8 +593,8 @@ def save_auth_session(auth_payload):
 def submit_auth(auth_mode, email, password, location):
     endpoint = "login" if auth_mode == "Login" else "signup"
     try:
-        response = requests.post(
-            f"{API_URL}/auth/{endpoint}",
+        response = api_post(
+            f"/auth/{endpoint}",
             json={"email": email, "password": password},
             timeout=20,
         )
@@ -1080,8 +1090,8 @@ with tab_workspace:
                         "shoulder_bias": st.session_state.shoulder_bias,
                     }
                     try:
-                        response = requests.post(
-                            f"{API_URL}/detect-faces",
+                        response = api_post(
+                            "/detect-faces",
                             files=files,
                             data=data,
                             headers=auth_headers(),
@@ -1190,8 +1200,8 @@ with tab_workspace:
                 if st.button(crop_button_label, type="primary", use_container_width=True, disabled=not selected_indices):
                     with st.spinner("Cropping and saving selected faces…"):
                         try:
-                            response = requests.post(
-                                f"{API_URL}/crop-selected",
+                            response = api_post(
+                                "/crop-selected",
                                 json={
                                     "task_id": detection_result["task_id"],
                                     "selected_face_indices": selected_indices,
@@ -1237,7 +1247,7 @@ with tab_workspace:
 
 with tab_history:
     try:
-        response = requests.get(f"{API_URL}/tasks?limit=10", headers=auth_headers(), timeout=20)
+        response = api_get("/tasks?limit=10", headers=auth_headers(), timeout=20)
         response.raise_for_status()
     except requests.RequestException as exc:
         handle_request_error(exc, st, "Could not load task history")

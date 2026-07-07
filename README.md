@@ -15,6 +15,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - The frontend hides the uploader after one image is loaded, then shows a simple active-file bar and a change-image action.
 - The saved-output panel shows selected crop previews and a download button for each generated crop.
 - The login-first page has an Apple-like animated product layout with glass styling and a reduced-motion fallback.
+- Frontend-to-backend local API calls use a no-proxy requests session so `127.0.0.1` does not get routed through system proxy settings.
 - Crop expansion and vertical offset are hidden inside the `Crop box tuning` expander until portrait framing needs adjustment.
 - Detection results are drawn back onto the full original image so crop locations can be visually checked before saving crops.
 - Green boxes show the proposed crop regions on the original image.
@@ -94,6 +95,15 @@ Override with:
 ```bash
 API_URL=http://127.0.0.1:8000 streamlit run frontend/app.py
 ```
+
+If the frontend reports `Backend unavailable: 502` while these endpoints work in the browser:
+
+```text
+http://127.0.0.1:8000/health
+http://127.0.0.1:8000/config
+```
+
+restart the Streamlit terminal so it reloads the no-proxy frontend API session.
 
 ## Supabase Setup
 
