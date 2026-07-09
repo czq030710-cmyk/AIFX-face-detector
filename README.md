@@ -30,6 +30,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Saved original and crop filenames keep the uploaded image name plus a short task id, for example `abc-original-a1b2c3d4.png` and `abc-crops-01-a1b2c3d4.png`.
 - Phase 2 Day 1 is started: the backend now stores `zooey.json` as a ComfyUI workflow template, injects crop image, LoRA, prompt, and output prefix at runtime, and exposes a crop-only enhancement API.
 - Phase 2 dry-run validation passes without ComfyUI running, confirming nodes `958`, `1056`, `1057`, `1071`, and `866` are injected correctly.
+- Phase 2 character LoRA catalog is in `config/lora_config.json`; it maps clean API ids such as `sean`, `raymond_lam`, and `cheung_kaichung` to the actual ComfyUI `.safetensors` LoRA filenames.
 - Docker and final QA are next.
 
 ## Working Agreement
@@ -328,11 +329,18 @@ Phase 2 uses `backend/workflows/zooey.json` as the fixed ComfyUI API workflow te
 - `1071.inputs.text`: optional manual enhancement prompt.
 - `866.inputs.filename_prefix`: unique Phase 2 job prefix.
 
-Character-to-LoRA mapping lives in `config/lora_config.json`. The initial character id is:
+Character-to-LoRA mapping lives in `config/lora_config.json`. It converts readable API ids into the exact ComfyUI LoRA filenames discovered from the ComfyUI `object_info` LoRA list.
+
+Examples:
 
 ```text
 cousin_sean -> Cousin_Sean-0331.safetensors
+sean -> Sean-20260326-0829.safetensors
+raymond_lam -> Raymond_Lam-dc1a146a-3edb-4658-9a65-648be4d363c5.safetensors
+cheung_kaichung -> cheungkaichung-8b5ad90c-ffe3-425d-b54b-126e77877986.safetensors
 ```
+
+Tool/video LoRAs such as `wan2.2_i2v_*` and `intrinsic_lora_sd15_*` are intentionally excluded from the character catalog. To add or rename a selectable character, edit `config/lora_config.json` and keep `first_pass_node` and `second_pass_node` set to `1056` and `1057` for the current `zooey.json` workflow.
 
 Phase 2 endpoints:
 

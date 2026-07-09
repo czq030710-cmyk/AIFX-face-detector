@@ -25,6 +25,8 @@ class ComfyUIClient:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.client_id = str(uuid4())
+        self.session = requests.Session()
+        self.session.trust_env = False
 
     def upload_image(self, image_bytes: bytes, filename: str) -> str:
         files = {
@@ -35,7 +37,7 @@ class ComfyUIClient:
             "overwrite": "true",
         }
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.base_url}/upload/image",
                 files=files,
                 data=data,
@@ -53,7 +55,7 @@ class ComfyUIClient:
 
     def submit_prompt(self, workflow: dict[str, Any]) -> str:
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.base_url}/prompt",
                 json={"prompt": workflow, "client_id": self.client_id},
                 timeout=60,
@@ -93,7 +95,7 @@ class ComfyUIClient:
             "type": image.image_type,
         }
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.base_url}/view",
                 params=params,
                 timeout=60,
@@ -105,7 +107,7 @@ class ComfyUIClient:
 
     def _get_history(self, prompt_id: str) -> dict[str, Any]:
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.base_url}/history/{prompt_id}",
                 timeout=30,
             )
