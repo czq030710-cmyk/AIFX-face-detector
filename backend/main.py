@@ -104,6 +104,13 @@ def safe_storage_segment(value: str | None, fallback: str = "item") -> str:
     return (segment or fallback)[:120]
 
 
+def validate_phase2_job_id(job_id: str | None) -> str:
+    normalized_job_id = (job_id or "").strip()
+    if not re.fullmatch(r"\d{8}_\d{2,}", normalized_job_id):
+        raise HTTPException(status_code=400, detail="job_id must use YYYYMMDD_01 format.")
+    return normalized_job_id
+
+
 def load_json_file(path: Path) -> dict:
     if not path.exists():
         raise HTTPException(status_code=500, detail=f"Missing required file: {path}")
@@ -223,6 +230,7 @@ def get_face_enhance_config(user: UserContext = Depends(get_phase2_user)):
 async def upload_image_to_cloud_storage(
     image: UploadFile = File(...),
     asset_type: str = Form("original"),
+    job_id: str | None = Form(None),
     purpose: str = Form("phase2-input"),
     user: UserContext = Depends(get_phase2_user),
 ):
@@ -240,15 +248,23 @@ async def upload_image_to_cloud_storage(
         raise HTTPException(status_code=400, detail="Uploaded image is empty.")
 
     storage_bucket = supabase_gateway.bucket_for_asset(asset_type)
-    upload_id = f"upload_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
+    if asset_type == "original" and not job_id:
+        resolved_job_id = supabase_gateway.next_enhancement_job_id()
+    elif asset_type == "original":
+        resolved_job_id = validate_phase2_job_id(job_id)
+    else:
+        if not job_id:
+            raise HTTPException(status_code=400, detail=f"job_id is required when asset_type is '{asset_type}'.")
+        resolved_job_id = validate_phase2_job_id(job_id)
+
     source_stem = safe_filename_stem(image.filename)
     extension = STORAGE_IMAGE_CONTENT_TYPES[image.content_type]
-    cloud_filename = f"{source_stem}-{upload_id.split('_')[-1]}{extension}"
+    cloud_filename = f"{source_stem}-{resolved_job_id}{extension}"
     storage_path = "/".join(
         [
             safe_storage_segment(user.user_id, "user"),
-            upload_id,
-            safe_storage_segment(purpose, "input"),
+            resolved_job_id,
+            safe_storage_segment(asset_type, "asset"),
             cloud_filename,
         ]
     )
@@ -258,9 +274,21 @@ async def upload_image_to_cloud_storage(
         image.content_type,
         bucket_name=storage_bucket,
     )
+    supabase_gateway.save_enhancement_upload(
+        job_id=resolved_job_id,
+        user=user,
+        asset_type=asset_type,
+        bucket=storage_bucket,
+        storage_path=storage_path,
+        storage_url=storage_url,
+        source_filename=image.filename,
+        purpose=purpose,
+        content_type=image.content_type,
+        size_bytes=len(image_bytes),
+    )
 
     return {
-        "job_id": upload_id,
+        "job_id": resolved_job_id,
         "status": "uploaded",
         "storage_provider": "supabase",
         "asset_type": asset_type,

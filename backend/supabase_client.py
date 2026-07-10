@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -111,6 +112,131 @@ class SupabaseGateway:
             known_types = ", ".join(sorted(self.asset_buckets))
             raise HTTPException(status_code=400, detail=f"asset_type must be one of: {known_types}.")
         return bucket
+
+    def ensure_asset_buckets(self) -> list[dict[str, str]]:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        existing_buckets = self.service_client.storage.list_buckets()
+        existing_names = {
+            getattr(bucket, "name", None) or bucket.get("name")
+            for bucket in existing_buckets
+        }
+        results = []
+        for asset_type, bucket_name in self.asset_buckets.items():
+            if bucket_name in existing_names:
+                results.append({"asset_type": asset_type, "bucket": bucket_name, "status": "exists"})
+                continue
+            try:
+                self.service_client.storage.create_bucket(
+                    bucket_name,
+                    options={"public": True},
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Creating bucket '{bucket_name}' failed: {exc}") from exc
+            results.append({"asset_type": asset_type, "bucket": bucket_name, "status": "created"})
+        return results
+
+    def next_enhancement_job_id(self) -> str:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        prefix = datetime.now().strftime("%Y%m%d")
+        try:
+            response = (
+                self.service_client.table("enhancement_jobs")
+                .select("job_id")
+                .like("job_id", f"{prefix}_%")
+                .order("job_id", desc=True)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Loading latest enhancement job id failed: {exc}") from exc
+
+        latest_job_id = (response.data or [{}])[0].get("job_id") if response.data else None
+        next_number = 1
+        if latest_job_id:
+            _, _, suffix = latest_job_id.partition("_")
+            if suffix.isdigit():
+                next_number = int(suffix) + 1
+        return f"{prefix}_{next_number:02d}"
+
+    def save_enhancement_upload(
+        self,
+        *,
+        job_id: str,
+        user: UserContext,
+        asset_type: str,
+        bucket: str,
+        storage_path: str,
+        storage_url: str,
+        source_filename: str | None,
+        purpose: str,
+        content_type: str,
+        size_bytes: int,
+    ) -> None:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+
+        field_prefixes = {
+            "original": "original",
+            "crop": "crop",
+            "enhanced_crop": "enhanced_crop",
+            "enhanced_original": "enhanced_original",
+        }
+        status_by_asset = {
+            "original": "original_uploaded",
+            "crop": "crop_uploaded",
+            "enhanced_crop": "enhanced_crop_uploaded",
+            "enhanced_original": "completed",
+        }
+        field_prefix = field_prefixes.get(asset_type)
+        if not field_prefix:
+            known_types = ", ".join(sorted(field_prefixes))
+            raise HTTPException(status_code=400, detail=f"asset_type must be one of: {known_types}.")
+
+        upload_metadata = {
+            "last_upload": {
+                "asset_type": asset_type,
+                "purpose": purpose,
+                "content_type": content_type,
+                "size_bytes": size_bytes,
+                "stored_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        }
+        asset_fields = {
+            f"{field_prefix}_bucket": bucket,
+            f"{field_prefix}_path": storage_path,
+            f"{field_prefix}_url": storage_url,
+            "status": status_by_asset[asset_type],
+            "metadata": upload_metadata,
+        }
+
+        try:
+            if asset_type == "original":
+                record = {
+                    "job_id": job_id,
+                    "user_id": user.user_id,
+                    "source_filename": source_filename,
+                    **asset_fields,
+                }
+                self.service_client.table("enhancement_jobs").upsert(
+                    record,
+                    on_conflict="job_id",
+                ).execute()
+                return
+
+            response = (
+                self.service_client.table("enhancement_jobs")
+                .update(asset_fields)
+                .eq("job_id", job_id)
+                .eq("user_id", user.user_id)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Saving enhancement job upload failed: {exc}") from exc
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail=f"Enhancement job '{job_id}' was not found for this user.")
 
     def insert_task(self, record: dict[str, Any]) -> None:
         if not self.enabled:

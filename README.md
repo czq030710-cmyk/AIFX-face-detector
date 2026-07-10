@@ -387,10 +387,13 @@ POST /api/v1/face-enhance
 ```text
 image=<image file>
 asset_type=original|crop|enhanced_crop|enhanced_original
+job_id=20260710_01
 purpose=phase2-input
 ```
 
-It requires Supabase credentials. If cloud storage is not configured, it returns `503` instead of saving the file locally. A successful response includes:
+It requires Supabase credentials. If cloud storage is not configured, it returns `503` instead of saving the file locally. For `asset_type=original`, omit `job_id` to create the next date-based id automatically, such as `20260710_01`, `20260710_02`, and so on. For `crop`, `enhanced_crop`, and `enhanced_original`, pass the existing `job_id` so all four files stay attached to the same database job.
+
+A successful response includes:
 
 ```text
 job_id
@@ -420,6 +423,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/storage/images \
   -H "Authorization: Bearer your-token-or-phase2-api-key" \
   -F image=@storage/crops/example-crop.png \
   -F asset_type=crop \
+  -F job_id=20260710_01 \
   -F purpose=phase2-input
 ```
 

@@ -91,8 +91,8 @@ create policy "Users can upload their own AIFX phase2 files"
     );
 
 create table if not exists public.enhancement_jobs (
-    job_id uuid primary key default gen_random_uuid(),
-    user_id uuid not null references auth.users(id) on delete cascade,
+    job_id text primary key,
+    user_id text not null,
     status text not null default 'queued',
     source_filename text,
     character_id text,
@@ -119,7 +119,9 @@ create table if not exists public.enhancement_jobs (
     metadata jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    completed_at timestamptz
+    completed_at timestamptz,
+    constraint enhancement_jobs_job_id_format
+        check (job_id ~ '^[0-9]{8}_[0-9]{2,}$')
 );
 
 create index if not exists enhancement_jobs_user_created_at_idx
@@ -135,10 +137,10 @@ drop policy if exists "Users can read their own enhancement jobs" on public.enha
 create policy "Users can read their own enhancement jobs"
     on public.enhancement_jobs
     for select
-    using (auth.uid() = user_id);
+    using (auth.uid()::text = user_id);
 
 drop policy if exists "Users can insert their own enhancement jobs" on public.enhancement_jobs;
 create policy "Users can insert their own enhancement jobs"
     on public.enhancement_jobs
     for insert
-    with check (auth.uid() = user_id);
+    with check (auth.uid()::text = user_id);
