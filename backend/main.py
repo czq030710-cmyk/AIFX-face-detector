@@ -188,12 +188,23 @@ def get_config():
 @app.get("/api/v1/face-enhance/config")
 def get_face_enhance_config(user: UserContext = Depends(get_phase2_user)):
     lora_config = load_lora_config()
+    characters = [
+        {
+            "character_id": character_id,
+            "display_name": character.get("display_name", character_id),
+            "lora_name": character.get("lora_name"),
+            "first_pass_node": character.get("first_pass_node", "1056"),
+            "second_pass_node": character.get("second_pass_node", "1057"),
+        }
+        for character_id, character in sorted(lora_config["characters"].items())
+    ]
     return {
         "workflow_template": str(WORKFLOW_TEMPLATE_PATH.relative_to(Path(__file__).resolve().parent.parent)),
         "required_nodes": ["958", "1056", "1057", "1071", COMFY_OUTPUT_NODE_ID],
         "comfyui_url": os.getenv("COMFYUI_URL", "http://127.0.0.1:8188"),
         "default_character_id": lora_config["default_character_id"],
-        "characters": sorted(lora_config["characters"].keys()),
+        "characters": characters,
+        "character_ids": [character["character_id"] for character in characters],
         "user_id": user.user_id,
     }
 

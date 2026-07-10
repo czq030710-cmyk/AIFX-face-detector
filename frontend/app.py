@@ -1,5 +1,6 @@
 import os
 import base64
+import json
 from html import escape
 from io import BytesIO
 
@@ -554,6 +555,24 @@ def load_api_config():
     return config
 
 
+@st.cache_data(ttl=30)
+def load_face_enhance_config(auth_token=None):
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    try:
+        response = api_get("/api/v1/face-enhance/config", headers=headers, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        return {
+            "api_available": False,
+            "error": str(exc),
+            "characters": [],
+            "default_character_id": None,
+        }
+    config = response.json()
+    config["api_available"] = True
+    return config
+
+
 def auth_headers():
     token = st.session_state.get("auth_token")
     if not token:
@@ -1003,6 +1022,79 @@ def selected_face_indices(faces):
     ]
 
 
+def normalize_character_catalog(face_enhance_config):
+    characters = face_enhance_config.get("characters", [])
+    catalog = {}
+    if isinstance(characters, dict):
+        iterable = characters.items()
+        for character_id, details in iterable:
+            catalog[character_id] = {
+                "character_id": character_id,
+                "display_name": details.get("display_name", character_id),
+                "lora_name": details.get("lora_name", ""),
+            }
+    else:
+        for character in characters:
+            if isinstance(character, str):
+                catalog[character] = {
+                    "character_id": character,
+                    "display_name": character.replace("_", " ").title(),
+                    "lora_name": "",
+                }
+            else:
+                character_id = character.get("character_id")
+                if character_id:
+                    catalog[character_id] = {
+                        "character_id": character_id,
+                        "display_name": character.get("display_name", character_id),
+                        "lora_name": character.get("lora_name", ""),
+                    }
+    return catalog
+
+
+def build_enhancement_plan(crop_result, character_catalog):
+    faces = []
+    for face in crop_result.get("faces", []):
+        key = f"target_character_{crop_result['task_id']}_{face['output_index']}"
+        character_id = st.session_state.get(key)
+        character = character_catalog.get(character_id, {})
+        faces.append(
+            {
+                "output_index": face["output_index"],
+                "face_index": face["face_index"],
+                "crop_url": face["url"],
+                "crop_filename": face["filename"],
+                "crop_bbox": face["crop_bbox"],
+                "face_bbox": face["face_bbox"],
+                "target_character_id": character_id,
+                "target_display_name": character.get("display_name", character_id),
+                "target_lora_name": character.get("lora_name", ""),
+                "planned_steps": [
+                    "enhance_crop_with_selected_lora",
+                    "resize_enhanced_crop_to_crop_bbox",
+                    "feather_blend_enhanced_crop_into_original_image",
+                ],
+            }
+        )
+
+    return {
+        "task_id": crop_result["task_id"],
+        "source_filename": crop_result.get("filename"),
+        "original_image_url": crop_result.get("original_image_url"),
+        "image_width": crop_result.get("image_width"),
+        "image_height": crop_result.get("image_height"),
+        "workflow_template": "zooey.json",
+        "enhance_endpoint": "/api/v1/face-enhance",
+        "blend_strategy": {
+            "target_region": "crop_bbox",
+            "mask": "future_soft_edge_mask",
+            "feather_radius_px": 24,
+            "placement": "paste enhanced crop back into original image coordinates",
+        },
+        "faces": faces,
+    }
+
+
 tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
 
 with tab_workspace:
@@ -1218,9 +1310,14 @@ with tab_workspace:
                             st.success(crop_result["message"])
                 if st.session_state.get("crop_result"):
                     st.markdown('<div class="panel-title">Saved Output</div>', unsafe_allow_html=True)
-                    output_list = st.container(height=260, border=True)
+                    crop_result = st.session_state.crop_result
+                    face_enhance_config = load_face_enhance_config(st.session_state.get("auth_token"))
+                    character_catalog = normalize_character_catalog(face_enhance_config)
+                    default_character_id = face_enhance_config.get("default_character_id")
+                    character_options = list(character_catalog)
+                    output_list = st.container(height=430, border=True)
                     with output_list:
-                        for face in st.session_state.crop_result.get("faces", []):
+                        for face in crop_result.get("faces", []):
                             crop_bytes = base64.b64decode(face["preview_base64"])
                             preview_col, download_col = st.columns([0.34, 0.66], gap="small")
                             with preview_col:
@@ -1243,7 +1340,48 @@ with tab_workspace:
                                     key=f"download_crop_{face['output_index']}_{face['filename']}",
                                     use_container_width=True,
                                 )
+                                target_key = f"target_character_{crop_result['task_id']}_{face['output_index']}"
+                                if character_options:
+                                    if target_key not in st.session_state:
+                                        st.session_state[target_key] = (
+                                            default_character_id
+                                            if default_character_id in character_catalog
+                                            else character_options[0]
+                                        )
+                                    st.selectbox(
+                                        "Target LoRA role",
+                                        character_options,
+                                        key=target_key,
+                                        format_func=lambda character_id: (
+                                            character_catalog.get(character_id, {}).get("display_name", character_id)
+                                        ),
+                                        help="Choose the LoRA identity used later to enhance or replace this crop before feather blending it back into the original image.",
+                                    )
+                                    selected_character = character_catalog.get(st.session_state[target_key], {})
+                                    st.caption(
+                                        f"LoRA: {selected_character.get('lora_name', 'unknown')}"
+                                    )
+                                else:
+                                    st.warning(
+                                        f"LoRA catalog unavailable: {face_enhance_config.get('error', 'unknown error')}"
+                                    )
                             st.divider()
+                    if character_options:
+                        enhancement_plan = build_enhancement_plan(crop_result, character_catalog)
+                        plan_json = json.dumps(enhancement_plan, indent=2)
+                        st.markdown('<div class="panel-title">Enhancement Plan</div>', unsafe_allow_html=True)
+                        st.caption(
+                            "This plan records which saved crop maps to which target LoRA role. It does not run ComfyUI yet."
+                        )
+                        st.download_button(
+                            "Download enhancement plan JSON",
+                            data=plan_json,
+                            file_name=f"{crop_result['task_id']}-enhancement-plan.json",
+                            mime="application/json",
+                            use_container_width=True,
+                        )
+                        with st.expander("Preview enhancement plan", expanded=False):
+                            st.json(enhancement_plan)
 
 with tab_history:
     try:

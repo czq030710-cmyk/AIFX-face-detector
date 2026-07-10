@@ -31,6 +31,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Phase 2 Day 1 is started: the backend now stores `zooey.json` as a ComfyUI workflow template, injects crop image, LoRA, prompt, and output prefix at runtime, and exposes a crop-only enhancement API.
 - Phase 2 dry-run validation passes without ComfyUI running, confirming nodes `958`, `1056`, `1057`, `1071`, and `866` are injected correctly.
 - Phase 2 character LoRA catalog is in `config/lora_config.json`; it maps clean API ids such as `sean`, `raymond_lam`, and `cheung_kaichung` to the actual ComfyUI `.safetensors` LoRA filenames.
+- After crops are saved, the frontend lets the user assign a target LoRA role to each crop and download an enhancement-plan JSON for later ComfyUI enhancement and feathered placement back into the original image.
 - Docker and final QA are next.
 
 ## Working Agreement
@@ -341,6 +342,17 @@ cheung_kaichung -> cheungkaichung-8b5ad90c-ffe3-425d-b54b-126e77877986.safetenso
 ```
 
 Tool/video LoRAs such as `wan2.2_i2v_*` and `intrinsic_lora_sd15_*` are intentionally excluded from the character catalog. To add or rename a selectable character, edit `config/lora_config.json` and keep `first_pass_node` and `second_pass_node` set to `1056` and `1057` for the current `zooey.json` workflow.
+
+The frontend uses the same catalog after `Save Selected Crops`. Each saved crop can be assigned a target character. The generated enhancement-plan JSON includes:
+
+- original image URL and dimensions
+- crop URL and crop filename
+- `crop_bbox` and `face_bbox`
+- selected `target_character_id`
+- selected display name and exact `target_lora_name`
+- future steps for enhancing the crop, resizing it to `crop_bbox`, and feather-blending it back into the original image
+
+This planning step does not call ComfyUI and does not use ComfyUI Node Manager or Model Downloader.
 
 Phase 2 endpoints:
 
