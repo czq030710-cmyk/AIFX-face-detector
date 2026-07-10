@@ -111,6 +111,9 @@ create table if not exists public.enhancement_jobs (
     enhanced_original_url text,
     crop_bbox jsonb not null default '{}'::jsonb,
     face_bbox jsonb not null default '{}'::jsonb,
+    comfy_input_filename text,
+    comfy_input_subfolder text,
+    comfy_input_type text,
     comfy_prompt_id text,
     retry_count integer not null default 0,
     max_retries integer not null default 3,
@@ -124,12 +127,18 @@ create table if not exists public.enhancement_jobs (
         check (job_id ~ '^[0-9]{8}_[0-9]{2,}$')
 );
 
+alter table public.enhancement_jobs
+    add column if not exists comfy_input_filename text,
+    add column if not exists comfy_input_subfolder text,
+    add column if not exists comfy_input_type text;
+
 create index if not exists enhancement_jobs_user_created_at_idx
     on public.enhancement_jobs (user_id, created_at desc);
 
-create index if not exists enhancement_jobs_queue_idx
+drop index if exists enhancement_jobs_queue_idx;
+create index enhancement_jobs_queue_idx
     on public.enhancement_jobs (status, next_retry_at, created_at)
-    where status in ('queued', 'retrying');
+    where status in ('queued_for_comfy_upload', 'retrying_comfy_upload');
 
 alter table public.enhancement_jobs enable row level security;
 

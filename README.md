@@ -379,6 +379,9 @@ Phase 2 endpoints:
 ```text
 GET  /api/v1/face-enhance/config
 POST /api/v1/storage/images
+GET  /api/v1/enhancement-jobs/{job_id}
+POST /api/v1/enhancement-jobs/{job_id}/queue-comfy-upload
+POST /api/v1/workers/comfy-upload-once
 POST /api/v1/face-enhance
 ```
 
@@ -415,6 +418,28 @@ aifx-enhanced-originals  final original image after feather blending
 ```
 
 The database should not store image binaries. The `enhancement_jobs` table stores job status, retry metadata, ComfyUI prompt id, and the bucket/path/URL for each of the four image stages.
+
+The first job queue implementation is Supabase-table-driven. `enhancement_jobs.status` is the waiting list:
+
+```text
+crop_uploaded
+queued_for_comfy_upload
+uploading_to_comfy
+uploaded_to_comfy
+retrying_comfy_upload
+failed_comfy_upload
+```
+
+`POST /api/v1/enhancement-jobs/{job_id}/queue-comfy-upload` moves a job with a saved crop into the queue. `POST /api/v1/workers/comfy-upload-once` processes one ready queue item by downloading `crop_url` from Supabase Storage and uploading it to ComfyUI `/upload/image`. It intentionally does not call ComfyUI `/prompt`, so no enhancement workflow runs at this stage.
+
+Retry behavior:
+
+```text
+retry 1 waits 2 seconds
+retry 2 waits 4 seconds
+retry 3 waits 8 seconds
+then status becomes failed_comfy_upload
+```
 
 Example:
 

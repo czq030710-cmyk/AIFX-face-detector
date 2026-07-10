@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -237,6 +237,156 @@ class SupabaseGateway:
 
         if not response.data:
             raise HTTPException(status_code=404, detail=f"Enhancement job '{job_id}' was not found for this user.")
+
+    def get_enhancement_job(self, job_id: str, user: UserContext) -> dict[str, Any]:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        try:
+            response = (
+                self.service_client.table("enhancement_jobs")
+                .select("*")
+                .eq("job_id", job_id)
+                .eq("user_id", user.user_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Loading enhancement job failed: {exc}") from exc
+        if not response.data:
+            raise HTTPException(status_code=404, detail=f"Enhancement job '{job_id}' was not found for this user.")
+        return response.data[0]
+
+    def update_enhancement_job(
+        self,
+        job_id: str,
+        user: UserContext,
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        update_fields = {
+            **fields,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        try:
+            response = (
+                self.service_client.table("enhancement_jobs")
+                .update(update_fields)
+                .eq("job_id", job_id)
+                .eq("user_id", user.user_id)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Updating enhancement job failed: {exc}") from exc
+        if not response.data:
+            raise HTTPException(status_code=404, detail=f"Enhancement job '{job_id}' was not found for this user.")
+        return response.data[0]
+
+    def queue_comfy_upload(
+        self,
+        job_id: str,
+        user: UserContext,
+        max_retries: int = 3,
+    ) -> dict[str, Any]:
+        job = self.get_enhancement_job(job_id, user)
+        if not job.get("crop_url"):
+            raise HTTPException(status_code=400, detail="Upload a crop asset before queueing ComfyUI upload.")
+        return self.update_enhancement_job(
+            job_id,
+            user,
+            {
+                "status": "queued_for_comfy_upload",
+                "retry_count": 0,
+                "max_retries": max_retries,
+                "next_retry_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "last_error": None,
+            },
+        )
+
+    def next_comfy_upload_job(self, user: UserContext) -> dict[str, Any] | None:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        try:
+            response = (
+                self.service_client.table("enhancement_jobs")
+                .select("*")
+                .eq("user_id", user.user_id)
+                .in_("status", ["queued_for_comfy_upload", "retrying_comfy_upload"])
+                .order("created_at", desc=False)
+                .limit(20)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Loading queued enhancement jobs failed: {exc}") from exc
+
+        now = datetime.now(timezone.utc)
+        for job in response.data or []:
+            next_retry_at = job.get("next_retry_at")
+            if not next_retry_at:
+                return job
+            try:
+                retry_at = datetime.fromisoformat(next_retry_at.replace("Z", "+00:00"))
+            except ValueError:
+                return job
+            if retry_at <= now:
+                return job
+        return None
+
+    def mark_comfy_upload_success(
+        self,
+        *,
+        job: dict[str, Any],
+        user: UserContext,
+        comfy_input_filename: str,
+        comfy_input_subfolder: str = "",
+        comfy_input_type: str = "input",
+    ) -> dict[str, Any]:
+        metadata = dict(job.get("metadata") or {})
+        metadata["comfy_upload"] = {
+            "filename": comfy_input_filename,
+            "subfolder": comfy_input_subfolder,
+            "type": comfy_input_type,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        return self.update_enhancement_job(
+            job["job_id"],
+            user,
+            {
+                "status": "uploaded_to_comfy",
+                "comfy_input_filename": comfy_input_filename,
+                "comfy_input_subfolder": comfy_input_subfolder,
+                "comfy_input_type": comfy_input_type,
+                "last_error": None,
+                "metadata": metadata,
+            },
+        )
+
+    def mark_comfy_upload_failure(
+        self,
+        *,
+        job: dict[str, Any],
+        user: UserContext,
+        error_message: str,
+    ) -> dict[str, Any]:
+        retry_count = int(job.get("retry_count") or 0) + 1
+        max_retries = int(job.get("max_retries") or 3)
+        retry_delay_seconds = 2 ** retry_count
+        failed_permanently = retry_count >= max_retries
+        next_retry_at = None
+        if not failed_permanently:
+            next_retry_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=retry_delay_seconds)
+            ).isoformat(timespec="seconds")
+        return self.update_enhancement_job(
+            job["job_id"],
+            user,
+            {
+                "status": "failed_comfy_upload" if failed_permanently else "retrying_comfy_upload",
+                "retry_count": retry_count,
+                "next_retry_at": next_retry_at,
+                "last_error": error_message[:1000],
+            },
+        )
 
     def insert_task(self, record: dict[str, Any]) -> None:
         if not self.enabled:

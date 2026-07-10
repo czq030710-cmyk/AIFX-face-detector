@@ -7,8 +7,10 @@ import os
 from pathlib import Path
 import re
 import time
+from urllib.parse import urlparse
 from uuid import uuid4
 
+import requests
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
@@ -58,6 +60,10 @@ class AuthCredentials(BaseModel):
 class CropSelectionRequest(BaseModel):
     task_id: str
     selected_face_indices: list[int]
+
+
+class QueueComfyUploadRequest(BaseModel):
+    max_retries: int = 3
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> UserContext:
@@ -189,6 +195,20 @@ def workflow_injection_summary(workflow: dict) -> dict:
     }
 
 
+def download_cloud_image_bytes(image_url: str) -> bytes:
+    parsed_url = urlparse(image_url)
+    if parsed_url.scheme != "https":
+        raise HTTPException(status_code=400, detail="Cloud image URL must use https.")
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        response = session.get(image_url, timeout=60)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Downloading cloud image failed: {exc}") from exc
+    return response.content
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "aifx-face-processing-api"}
@@ -302,6 +322,92 @@ async def upload_image_to_cloud_storage(
         "purpose": purpose,
         "user_id": user.user_id,
         "local_file_saved": False,
+    }
+
+
+@app.get("/api/v1/enhancement-jobs/{job_id}")
+def get_enhancement_job(
+    job_id: str,
+    user: UserContext = Depends(get_phase2_user),
+):
+    resolved_job_id = validate_phase2_job_id(job_id)
+    return supabase_gateway.get_enhancement_job(resolved_job_id, user)
+
+
+@app.post("/api/v1/enhancement-jobs/{job_id}/queue-comfy-upload")
+def queue_enhancement_job_for_comfy_upload(
+    job_id: str,
+    request: QueueComfyUploadRequest,
+    user: UserContext = Depends(get_phase2_user),
+):
+    resolved_job_id = validate_phase2_job_id(job_id)
+    if not 1 <= request.max_retries <= 10:
+        raise HTTPException(status_code=400, detail="max_retries must be between 1 and 10.")
+    job = supabase_gateway.queue_comfy_upload(resolved_job_id, user, request.max_retries)
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "retry_count": job.get("retry_count"),
+        "max_retries": job.get("max_retries"),
+        "next_retry_at": job.get("next_retry_at"),
+        "message": "Job queued for ComfyUI input upload only. It will not submit /prompt.",
+    }
+
+
+@app.post("/api/v1/workers/comfy-upload-once")
+def run_comfy_upload_worker_once(user: UserContext = Depends(get_phase2_user)):
+    job = supabase_gateway.next_comfy_upload_job(user)
+    if job is None:
+        return {"status": "idle", "message": "No ComfyUI upload jobs are ready."}
+
+    working_job = supabase_gateway.update_enhancement_job(
+        job["job_id"],
+        user,
+        {"status": "uploading_to_comfy"},
+    )
+    comfyui_url = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188")
+    comfyui_timeout = int(os.getenv("COMFYUI_TIMEOUT_SECONDS", "300"))
+    client = ComfyUIClient(comfyui_url, timeout_seconds=comfyui_timeout)
+    crop_url = working_job.get("crop_url")
+    if not crop_url:
+        raise HTTPException(status_code=400, detail="Queued job has no crop_url.")
+
+    try:
+        crop_bytes = download_cloud_image_bytes(crop_url)
+        comfy_filename = f"{working_job['job_id']}-{safe_filename_stem(working_job.get('source_filename'))}-crop.png"
+        comfy_input_filename = client.upload_image(crop_bytes, comfy_filename)
+    except (ComfyUIError, HTTPException) as exc:
+        error_message = str(exc.detail if isinstance(exc, HTTPException) else exc)
+        failed_job = supabase_gateway.mark_comfy_upload_failure(
+            job=working_job,
+            user=user,
+            error_message=error_message,
+        )
+        return {
+            "job_id": failed_job["job_id"],
+            "status": failed_job["status"],
+            "retry_count": failed_job.get("retry_count"),
+            "max_retries": failed_job.get("max_retries"),
+            "next_retry_at": failed_job.get("next_retry_at"),
+            "last_error": failed_job.get("last_error"),
+            "comfyui_url": comfyui_url,
+            "prompt_submitted": False,
+        }
+
+    completed_job = supabase_gateway.mark_comfy_upload_success(
+        job=working_job,
+        user=user,
+        comfy_input_filename=comfy_input_filename,
+    )
+    return {
+        "job_id": completed_job["job_id"],
+        "status": completed_job["status"],
+        "crop_url": completed_job.get("crop_url"),
+        "comfyui_url": comfyui_url,
+        "comfy_input_filename": completed_job.get("comfy_input_filename"),
+        "comfy_input_type": completed_job.get("comfy_input_type"),
+        "prompt_submitted": False,
+        "message": "Crop uploaded to ComfyUI input storage. /prompt was not called.",
     }
 
 
