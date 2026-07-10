@@ -22,6 +22,15 @@ class SupabaseGateway:
         self.anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip()
         self.service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
         self.bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "face-processing").strip()
+        self.asset_buckets = {
+            "original": os.getenv("SUPABASE_ORIGINAL_BUCKET", "aifx-originals").strip(),
+            "crop": os.getenv("SUPABASE_CROP_BUCKET", "aifx-crops").strip(),
+            "enhanced_crop": os.getenv("SUPABASE_ENHANCED_CROP_BUCKET", "aifx-enhanced-crops").strip(),
+            "enhanced_original": os.getenv(
+                "SUPABASE_ENHANCED_ORIGINAL_BUCKET",
+                "aifx-enhanced-originals",
+            ).strip(),
+        }
 
         self.enabled = bool(self.url and self.anon_key and self.service_role_key)
         self.auth_client = create_client(self.url, self.anon_key) if self.url and self.anon_key else None
@@ -74,11 +83,17 @@ class SupabaseGateway:
             is_authenticated=True,
         )
 
-    def upload_bytes(self, path: str, data: bytes, content_type: str) -> str:
+    def upload_bytes(
+        self,
+        path: str,
+        data: bytes,
+        content_type: str,
+        bucket_name: str | None = None,
+    ) -> str:
         if not self.enabled:
             raise RuntimeError("Supabase is not configured.")
         try:
-            bucket = self.service_client.storage.from_(self.bucket)
+            bucket = self.service_client.storage.from_(bucket_name or self.bucket)
             bucket.upload(
                 path,
                 data,
@@ -89,6 +104,13 @@ class SupabaseGateway:
             return bucket.get_public_url(path)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Supabase Storage upload failed: {exc}") from exc
+
+    def bucket_for_asset(self, asset_type: str) -> str:
+        bucket = self.asset_buckets.get(asset_type)
+        if not bucket:
+            known_types = ", ".join(sorted(self.asset_buckets))
+            raise HTTPException(status_code=400, detail=f"asset_type must be one of: {known_types}.")
+        return bucket
 
     def insert_task(self, record: dict[str, Any]) -> None:
         if not self.enabled:

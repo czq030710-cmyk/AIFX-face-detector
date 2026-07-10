@@ -222,6 +222,7 @@ def get_face_enhance_config(user: UserContext = Depends(get_phase2_user)):
 @app.post("/api/v1/storage/images")
 async def upload_image_to_cloud_storage(
     image: UploadFile = File(...),
+    asset_type: str = Form("original"),
     purpose: str = Form("phase2-input"),
     user: UserContext = Depends(get_phase2_user),
 ):
@@ -238,26 +239,32 @@ async def upload_image_to_cloud_storage(
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Uploaded image is empty.")
 
+    storage_bucket = supabase_gateway.bucket_for_asset(asset_type)
     upload_id = f"upload_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
     source_stem = safe_filename_stem(image.filename)
     extension = STORAGE_IMAGE_CONTENT_TYPES[image.content_type]
     cloud_filename = f"{source_stem}-{upload_id.split('_')[-1]}{extension}"
     storage_path = "/".join(
         [
-            "phase2",
             safe_storage_segment(user.user_id, "user"),
             upload_id,
             safe_storage_segment(purpose, "input"),
             cloud_filename,
         ]
     )
-    storage_url = supabase_gateway.upload_bytes(storage_path, image_bytes, image.content_type)
+    storage_url = supabase_gateway.upload_bytes(
+        storage_path,
+        image_bytes,
+        image.content_type,
+        bucket_name=storage_bucket,
+    )
 
     return {
         "job_id": upload_id,
         "status": "uploaded",
         "storage_provider": "supabase",
-        "bucket": supabase_gateway.bucket,
+        "asset_type": asset_type,
+        "bucket": storage_bucket,
         "storage_path": storage_path,
         "storage_url": storage_url,
         "source_filename": image.filename,

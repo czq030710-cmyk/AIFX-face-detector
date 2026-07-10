@@ -32,7 +32,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Phase 2 dry-run validation passes without ComfyUI running, confirming nodes `958`, `1056`, `1057`, `1071`, and `866` are injected correctly.
 - Phase 2 character LoRA catalog is loaded from local-only `config/lora_config.json`; commit only `config/lora_config.example.json`, because real LoRA filenames and role ids are private.
 - After crops are saved, the frontend lets the user assign a target LoRA role to each crop and download an enhancement-plan JSON for later ComfyUI enhancement and feathered placement back into the original image.
-- Phase 2 cloud-storage handoff has started with `POST /api/v1/storage/images`, which uploads an image directly to Supabase Storage and returns a cloud URL without saving a local copy.
+- Phase 2 cloud-storage handoff has started with `POST /api/v1/storage/images`, which uploads an image directly to one of four Supabase Storage buckets and returns a cloud URL without saving a local copy.
 - Docker and final QA are next.
 
 ## Working Agreement
@@ -123,6 +123,10 @@ SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_STORAGE_BUCKET=face-processing
+SUPABASE_ORIGINAL_BUCKET=aifx-originals
+SUPABASE_CROP_BUCKET=aifx-crops
+SUPABASE_ENHANCED_CROP_BUCKET=aifx-enhanced-crops
+SUPABASE_ENHANCED_ORIGINAL_BUCKET=aifx-enhanced-originals
 ```
 
 When all three Supabase keys are set, the backend enables cloud accounts:
@@ -382,6 +386,7 @@ POST /api/v1/face-enhance
 
 ```text
 image=<image file>
+asset_type=original|crop|enhanced_crop|enhanced_original
 purpose=phase2-input
 ```
 
@@ -390,10 +395,23 @@ It requires Supabase credentials. If cloud storage is not configured, it returns
 ```text
 job_id
 storage_provider=supabase
+asset_type
+bucket
 storage_path
 storage_url
 local_file_saved=false
 ```
+
+Phase 2 uses four Supabase Storage buckets:
+
+```text
+aifx-originals           original uploaded image
+aifx-crops               selected face crop before ComfyUI
+aifx-enhanced-crops      ComfyUI-enhanced face crop
+aifx-enhanced-originals  final original image after feather blending
+```
+
+The database should not store image binaries. The `enhancement_jobs` table stores job status, retry metadata, ComfyUI prompt id, and the bucket/path/URL for each of the four image stages.
 
 Example:
 
@@ -401,6 +419,7 @@ Example:
 curl -X POST http://127.0.0.1:8000/api/v1/storage/images \
   -H "Authorization: Bearer your-token-or-phase2-api-key" \
   -F image=@storage/crops/example-crop.png \
+  -F asset_type=crop \
   -F purpose=phase2-input
 ```
 
