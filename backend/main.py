@@ -39,6 +39,11 @@ LOCAL_HISTORY_PATH = STORAGE_DIR / "task_history.json"
 WORKFLOW_TEMPLATE_PATH = Path(__file__).resolve().parent / "workflows" / "zooey.json"
 LORA_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "lora_config.json"
 COMFY_OUTPUT_NODE_ID = "866"
+STORAGE_IMAGE_CONTENT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 for directory in (ORIGINALS_DIR, CROPS_DIR, DETECTIONS_DIR, ENHANCED_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -92,6 +97,11 @@ def safe_filename_stem(filename: str | None) -> str:
     stem = Path(filename or "upload").stem
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")
     return (stem or "upload")[:80]
+
+
+def safe_storage_segment(value: str | None, fallback: str = "item") -> str:
+    segment = re.sub(r"[^A-Za-z0-9._=-]+", "-", value or fallback).strip("-._")
+    return (segment or fallback)[:120]
 
 
 def load_json_file(path: Path) -> dict:
@@ -206,6 +216,57 @@ def get_face_enhance_config(user: UserContext = Depends(get_phase2_user)):
         "characters": characters,
         "character_ids": [character["character_id"] for character in characters],
         "user_id": user.user_id,
+    }
+
+
+@app.post("/api/v1/storage/images")
+async def upload_image_to_cloud_storage(
+    image: UploadFile = File(...),
+    purpose: str = Form("phase2-input"),
+    user: UserContext = Depends(get_phase2_user),
+):
+    if not supabase_gateway.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Cloud storage is not configured. Set Supabase credentials before using this endpoint.",
+        )
+    if image.content_type not in STORAGE_IMAGE_CONTENT_TYPES:
+        supported_types = ", ".join(sorted(STORAGE_IMAGE_CONTENT_TYPES))
+        raise HTTPException(status_code=400, detail=f"Only these image types are supported: {supported_types}.")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded image is empty.")
+
+    upload_id = f"upload_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
+    source_stem = safe_filename_stem(image.filename)
+    extension = STORAGE_IMAGE_CONTENT_TYPES[image.content_type]
+    cloud_filename = f"{source_stem}-{upload_id.split('_')[-1]}{extension}"
+    storage_path = "/".join(
+        [
+            "phase2",
+            safe_storage_segment(user.user_id, "user"),
+            upload_id,
+            safe_storage_segment(purpose, "input"),
+            cloud_filename,
+        ]
+    )
+    storage_url = supabase_gateway.upload_bytes(storage_path, image_bytes, image.content_type)
+
+    return {
+        "job_id": upload_id,
+        "status": "uploaded",
+        "storage_provider": "supabase",
+        "bucket": supabase_gateway.bucket,
+        "storage_path": storage_path,
+        "storage_url": storage_url,
+        "source_filename": image.filename,
+        "stored_filename": cloud_filename,
+        "content_type": image.content_type,
+        "size_bytes": len(image_bytes),
+        "purpose": purpose,
+        "user_id": user.user_id,
+        "local_file_saved": False,
     }
 
 

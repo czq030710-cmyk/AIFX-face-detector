@@ -32,6 +32,7 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - Phase 2 dry-run validation passes without ComfyUI running, confirming nodes `958`, `1056`, `1057`, `1071`, and `866` are injected correctly.
 - Phase 2 character LoRA catalog is loaded from local-only `config/lora_config.json`; commit only `config/lora_config.example.json`, because real LoRA filenames and role ids are private.
 - After crops are saved, the frontend lets the user assign a target LoRA role to each crop and download an enhancement-plan JSON for later ComfyUI enhancement and feathered placement back into the original image.
+- Phase 2 cloud-storage handoff has started with `POST /api/v1/storage/images`, which uploads an image directly to Supabase Storage and returns a cloud URL without saving a local copy.
 - Docker and final QA are next.
 
 ## Working Agreement
@@ -373,7 +374,34 @@ Phase 2 endpoints:
 
 ```text
 GET  /api/v1/face-enhance/config
+POST /api/v1/storage/images
 POST /api/v1/face-enhance
+```
+
+`POST /api/v1/storage/images` is the cloud-only upload step for the upcoming async job queue. It accepts multipart form data:
+
+```text
+image=<image file>
+purpose=phase2-input
+```
+
+It requires Supabase credentials. If cloud storage is not configured, it returns `503` instead of saving the file locally. A successful response includes:
+
+```text
+job_id
+storage_provider=supabase
+storage_path
+storage_url
+local_file_saved=false
+```
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/storage/images \
+  -H "Authorization: Bearer your-token-or-phase2-api-key" \
+  -F image=@storage/crops/example-crop.png \
+  -F purpose=phase2-input
 ```
 
 `POST /api/v1/face-enhance` accepts multipart form data:
