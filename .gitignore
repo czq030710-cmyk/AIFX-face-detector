@@ -4,6 +4,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 storage/
+config/lora_config.json
+backend/workflows/zooey.json
 
 # C extensions
 *.so

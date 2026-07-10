@@ -28,9 +28,9 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - If Supabase credentials are missing, the app stays usable in local demo mode and writes task history to `storage/task_history.json`.
 - The task history view shows the latest 10 tasks for the current logged-in user.
 - Saved original and crop filenames keep the uploaded image name plus a short task id, for example `abc-original-a1b2c3d4.png` and `abc-crops-01-a1b2c3d4.png`.
-- Phase 2 Day 1 is started: the backend now stores `zooey.json` as a ComfyUI workflow template, injects crop image, LoRA, prompt, and output prefix at runtime, and exposes a crop-only enhancement API.
+- Phase 2 Day 1 is started: the backend loads local-only `backend/workflows/zooey.json` as a private ComfyUI workflow template, injects crop image, LoRA, prompt, and output prefix at runtime, and exposes a crop-only enhancement API.
 - Phase 2 dry-run validation passes without ComfyUI running, confirming nodes `958`, `1056`, `1057`, `1071`, and `866` are injected correctly.
-- Phase 2 character LoRA catalog is in `config/lora_config.json`; it maps clean API ids such as `sean`, `raymond_lam`, and `cheung_kaichung` to the actual ComfyUI `.safetensors` LoRA filenames.
+- Phase 2 character LoRA catalog is loaded from local-only `config/lora_config.json`; commit only `config/lora_config.example.json`, because real LoRA filenames and role ids are private.
 - After crops are saved, the frontend lets the user assign a target LoRA role to each crop and download an enhancement-plan JSON for later ComfyUI enhancement and feathered placement back into the original image.
 - Docker and final QA are next.
 
@@ -322,7 +322,19 @@ For a ComfyUI workflow, pass the selected `cropped_image_urls[n]` as the image i
 
 ## Phase 2 Face Enhancement API
 
-Phase 2 uses `backend/workflows/zooey.json` as the fixed ComfyUI API workflow template. The backend deep-copies that template for each request and injects runtime values into the plan-defined nodes:
+Phase 2 uses local-only `backend/workflows/zooey.json` as the fixed ComfyUI API workflow template. The backend deep-copies that template for each request and injects runtime values into the plan-defined nodes. Do not commit the real workflow because it can contain private model, LoRA, node, and prompt details.
+
+Keep only this safe template in Git:
+
+```text
+backend/workflows/zooey.example.json
+```
+
+On a local machine, create or restore the private workflow at:
+
+```text
+backend/workflows/zooey.json
+```
 
 - `958.inputs.image`: uploaded cropped face filename in ComfyUI input storage.
 - `1056.inputs.lora_name`: first-pass character LoRA.
@@ -330,18 +342,21 @@ Phase 2 uses `backend/workflows/zooey.json` as the fixed ComfyUI API workflow te
 - `1071.inputs.text`: optional manual enhancement prompt.
 - `866.inputs.filename_prefix`: unique Phase 2 job prefix.
 
-Character-to-LoRA mapping lives in `config/lora_config.json`. It converts readable API ids into the exact ComfyUI LoRA filenames discovered from the ComfyUI `object_info` LoRA list.
+Character-to-LoRA mapping lives in local-only `config/lora_config.json`. It converts readable API ids into the exact ComfyUI LoRA filenames discovered from the private ComfyUI LoRA list.
 
-Examples:
+Create the local file from the safe template:
 
-```text
-cousin_sean -> Cousin_Sean-0331.safetensors
-sean -> Sean-20260326-0829.safetensors
-raymond_lam -> Raymond_Lam-dc1a146a-3edb-4658-9a65-648be4d363c5.safetensors
-cheung_kaichung -> cheungkaichung-8b5ad90c-ffe3-425d-b54b-126e77877986.safetensors
+```bash
+cp config/lora_config.example.json config/lora_config.json
 ```
 
-Tool/video LoRAs such as `wan2.2_i2v_*` and `intrinsic_lora_sd15_*` are intentionally excluded from the character catalog. To add or rename a selectable character, edit `config/lora_config.json` and keep `first_pass_node` and `second_pass_node` set to `1056` and `1057` for the current `zooey.json` workflow.
+Example shape:
+
+```text
+character_id -> private local .safetensors filename
+```
+
+Tool/video LoRAs should be excluded from the character catalog. To add or rename a selectable character, edit local `config/lora_config.json` and keep `first_pass_node` and `second_pass_node` set to `1056` and `1057` for the current private `zooey.json` workflow.
 
 The frontend uses the same catalog after `Save Selected Crops`. Each saved crop can be assigned a target character. The generated enhancement-plan JSON includes:
 

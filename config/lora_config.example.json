@@ -1,0 +1,13 @@
+{
+  "default_character_id": "example_character",
+  "first_pass_node": "1056",
+  "second_pass_node": "1057",
+  "characters": {
+    "example_character": {
+      "display_name": "Example Character",
+      "lora_name": "Example_Character.safetensors",
+      "first_pass_node": "1056",
+      "second_pass_node": "1057"
+    }
+  }
+}

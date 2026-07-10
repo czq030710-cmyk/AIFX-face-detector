@@ -1,0 +1,34 @@
+{
+  "958": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example-crop.png"
+    }
+  },
+  "1056": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "Example_Character.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "1057": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "Example_Character.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "1071": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "example prompt"
+    }
+  },
+  "866": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "phase2/example"
+    }
+  }
+}
