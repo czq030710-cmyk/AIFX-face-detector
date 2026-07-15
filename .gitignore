@@ -222,3 +222,6 @@ __marimo__/
 # Streamlit
 .streamlit/credentials.toml
 .streamlit/secrets.toml
+
+# Private personal operations guide (contains local infrastructure paths)
+output/docs/AIFX_Phase2_Private_Usage_Guide_CN.docx
