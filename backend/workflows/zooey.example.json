@@ -1,31 +1,31 @@
 {
-  "958": {
+  "PRIVATE_IMAGE_NODE_ID": {
     "class_type": "LoadImage",
     "inputs": {
       "image": "example-crop.png"
     }
   },
-  "1056": {
+  "PRIVATE_FIRST_LORA_NODE_ID": {
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "lora_name": "Example_Character.safetensors",
       "strength_model": 1.0
     }
   },
-  "1057": {
+  "PRIVATE_SECOND_LORA_NODE_ID": {
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "lora_name": "Example_Character.safetensors",
       "strength_model": 1.0
     }
   },
-  "1071": {
+  "PRIVATE_PROMPT_NODE_ID": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "example prompt"
     }
   },
-  "866": {
+  "PRIVATE_OUTPUT_NODE_ID": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "phase2/example"

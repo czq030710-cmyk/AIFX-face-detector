@@ -130,7 +130,99 @@ create table if not exists public.enhancement_jobs (
 alter table public.enhancement_jobs
     add column if not exists comfy_input_filename text,
     add column if not exists comfy_input_subfolder text,
-    add column if not exists comfy_input_type text;
+    add column if not exists comfy_input_type text,
+    add column if not exists feather_radius integer not null default 24;
+
+create table if not exists public.enhancement_job_counters (
+    job_date date primary key,
+    last_value integer not null default 0
+);
+
+create or replace function public.next_enhancement_job_id()
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    today date := current_date;
+    next_value integer;
+begin
+    insert into public.enhancement_job_counters (job_date, last_value)
+    values (today, 1)
+    on conflict (job_date)
+    do update set last_value = enhancement_job_counters.last_value + 1
+    returning last_value into next_value;
+
+    return to_char(today, 'YYYYMMDD') || '_' || lpad(next_value::text, 2, '0');
+end;
+$$;
+
+revoke all on function public.next_enhancement_job_id() from public;
+grant execute on function public.next_enhancement_job_id() to authenticated, service_role;
+
+create table if not exists public.enhancement_job_faces (
+    id uuid primary key default gen_random_uuid(),
+    job_id text not null references public.enhancement_jobs(job_id) on delete cascade,
+    user_id text not null,
+    face_id text not null,
+    output_index integer not null,
+    status text not null default 'queued',
+    character_id text not null,
+    prompt text not null default '',
+    crop_bbox jsonb not null,
+    face_bbox jsonb not null default '{}'::jsonb,
+    crop_bucket text not null,
+    crop_path text not null,
+    crop_url text not null,
+    enhanced_crop_bucket text,
+    enhanced_crop_path text,
+    enhanced_crop_url text,
+    comfy_input_filename text,
+    comfy_input_subfolder text,
+    comfy_input_type text,
+    comfy_prompt_id text,
+    comfy_output jsonb not null default '{}'::jsonb,
+    retry_count integer not null default 0,
+    max_retries integer not null default 3,
+    next_retry_at timestamptz,
+    last_error text,
+    runtime_seconds numeric,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    completed_at timestamptz,
+    unique (job_id, face_id),
+    unique (job_id, output_index)
+);
+
+create index if not exists enhancement_job_faces_job_idx
+    on public.enhancement_job_faces (job_id, output_index);
+
+drop index if exists enhancement_job_faces_queue_idx;
+create index enhancement_job_faces_queue_idx
+    on public.enhancement_job_faces (status, next_retry_at, created_at)
+    where status in ('queued', 'retrying');
+
+alter table public.enhancement_job_faces enable row level security;
+
+drop policy if exists "Users can read their own enhancement faces" on public.enhancement_job_faces;
+create policy "Users can read their own enhancement faces"
+    on public.enhancement_job_faces
+    for select
+    using (auth.uid()::text = user_id);
+
+drop policy if exists "Users can insert their own enhancement faces" on public.enhancement_job_faces;
+create policy "Users can insert their own enhancement faces"
+    on public.enhancement_job_faces
+    for insert
+    with check (auth.uid()::text = user_id);
+
+drop policy if exists "Users can update their own enhancement faces" on public.enhancement_job_faces;
+create policy "Users can update their own enhancement faces"
+    on public.enhancement_job_faces
+    for update
+    using (auth.uid()::text = user_id)
+    with check (auth.uid()::text = user_id);
 
 create index if not exists enhancement_jobs_user_created_at_idx
     on public.enhancement_jobs (user_id, created_at desc);

@@ -17,6 +17,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 from backend.comfyui_client import ComfyUIClient, ComfyUIError
+from backend.image_blender import ImageBlendError, blend_enhanced_faces, encode_png, load_rgb_image, normalize_crop_bbox
 from core_ai.face_detector import FaceDetector
 from backend.supabase_client import SupabaseGateway, UserContext
 
@@ -40,7 +41,7 @@ ENHANCED_DIR = STORAGE_DIR / "enhanced"
 LOCAL_HISTORY_PATH = STORAGE_DIR / "task_history.json"
 WORKFLOW_TEMPLATE_PATH = Path(__file__).resolve().parent / "workflows" / "zooey.json"
 LORA_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "lora_config.json"
-COMFY_OUTPUT_NODE_ID = "866"
+COMFY_NODE_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "comfyui_config.json"
 STORAGE_IMAGE_CONTENT_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -66,6 +67,10 @@ class QueueComfyUploadRequest(BaseModel):
     max_retries: int = 3
 
 
+class RetryEnhancementFaceRequest(BaseModel):
+    face_id: str
+
+
 def get_current_user(authorization: str | None = Header(default=None)) -> UserContext:
     return supabase_gateway.get_user_from_authorization(authorization)
 
@@ -88,6 +93,14 @@ def get_phase2_user(authorization: str | None = Header(default=None)) -> UserCon
         access_token=token,
         is_authenticated=True,
     )
+
+
+def require_worker_key(x_worker_key: str | None = Header(default=None)) -> None:
+    configured_key = os.getenv("AIFX_WORKER_API_KEY", "").strip()
+    if not configured_key:
+        raise HTTPException(status_code=503, detail="AIFX_WORKER_API_KEY is not configured.")
+    if x_worker_key != configured_key:
+        raise HTTPException(status_code=401, detail="Invalid worker API key.")
 
 
 def bearer_token(authorization: str | None) -> str:
@@ -155,6 +168,24 @@ def resolve_character_lora(character_id: str | None) -> dict:
     }
 
 
+def load_comfyui_node_config() -> dict[str, str]:
+    config = load_json_file(COMFY_NODE_CONFIG_PATH)
+    required_keys = {
+        "image_node",
+        "first_lora_node",
+        "second_lora_node",
+        "prompt_node",
+        "output_node",
+    }
+    missing_keys = sorted(required_keys - set(config))
+    if missing_keys:
+        raise HTTPException(
+            status_code=500,
+            detail=f"comfyui_config.json is missing keys: {', '.join(missing_keys)}",
+        )
+    return {key: str(config[key]) for key in required_keys}
+
+
 def build_comfyui_workflow(
     uploaded_image_filename: str,
     lora_name: str,
@@ -162,12 +193,13 @@ def build_comfyui_workflow(
     job_id: str,
 ) -> dict:
     workflow = deepcopy(load_json_file(WORKFLOW_TEMPLATE_PATH))
+    nodes = load_comfyui_node_config()
     required_nodes = {
-        "958": "LoadImage source image",
-        "1056": "first pass LoRA",
-        "1057": "second pass LoRA",
-        "1071": "manual prompt",
-        COMFY_OUTPUT_NODE_ID: "SaveImage output",
+        nodes["image_node"]: "LoadImage source image",
+        nodes["first_lora_node"]: "first pass LoRA",
+        nodes["second_lora_node"]: "second pass LoRA",
+        nodes["prompt_node"]: "manual prompt",
+        nodes["output_node"]: "SaveImage output",
     }
     missing_nodes = [
         f"{node_id} ({label})"
@@ -177,21 +209,22 @@ def build_comfyui_workflow(
     if missing_nodes:
         raise HTTPException(status_code=500, detail=f"Workflow template is missing nodes: {missing_nodes}")
 
-    workflow["958"]["inputs"]["image"] = uploaded_image_filename
-    workflow["1056"]["inputs"]["lora_name"] = lora_name
-    workflow["1057"]["inputs"]["lora_name"] = lora_name
-    workflow["1071"]["inputs"]["text"] = prompt.strip()
-    workflow[COMFY_OUTPUT_NODE_ID]["inputs"]["filename_prefix"] = f"phase2/{job_id}"
+    workflow[nodes["image_node"]]["inputs"]["image"] = uploaded_image_filename
+    workflow[nodes["first_lora_node"]]["inputs"]["lora_name"] = lora_name
+    workflow[nodes["second_lora_node"]]["inputs"]["lora_name"] = lora_name
+    workflow[nodes["prompt_node"]]["inputs"]["text"] = prompt.strip()
+    workflow[nodes["output_node"]]["inputs"]["filename_prefix"] = f"phase2/{job_id}"
     return workflow
 
 
 def workflow_injection_summary(workflow: dict) -> dict:
+    nodes = load_comfyui_node_config()
     return {
-        "958.inputs.image": workflow["958"]["inputs"]["image"],
-        "1056.inputs.lora_name": workflow["1056"]["inputs"]["lora_name"],
-        "1057.inputs.lora_name": workflow["1057"]["inputs"]["lora_name"],
-        "1071.inputs.text": workflow["1071"]["inputs"]["text"],
-        f"{COMFY_OUTPUT_NODE_ID}.inputs.filename_prefix": workflow[COMFY_OUTPUT_NODE_ID]["inputs"]["filename_prefix"],
+        "image": workflow[nodes["image_node"]]["inputs"]["image"],
+        "first_lora_configured": bool(workflow[nodes["first_lora_node"]]["inputs"]["lora_name"]),
+        "second_lora_configured": bool(workflow[nodes["second_lora_node"]]["inputs"]["lora_name"]),
+        "prompt": workflow[nodes["prompt_node"]]["inputs"]["text"],
+        "filename_prefix": workflow[nodes["output_node"]]["inputs"]["filename_prefix"],
     }
 
 
@@ -207,6 +240,250 @@ def download_cloud_image_bytes(image_url: str) -> bytes:
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Downloading cloud image failed: {exc}") from exc
     return response.content
+
+
+def parse_enhancement_faces(faces_json: str, crop_count: int) -> list[dict]:
+    try:
+        faces = json.loads(faces_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="faces_json must be valid JSON.") from exc
+    if not isinstance(faces, list) or not faces:
+        raise HTTPException(status_code=400, detail="faces_json must be a non-empty array.")
+    if len(faces) != crop_count:
+        raise HTTPException(
+            status_code=400,
+            detail="faces_json must contain exactly one entry for each uploaded crop.",
+        )
+
+    normalized_faces = []
+    seen_face_ids = set()
+    for output_index, face in enumerate(faces, start=1):
+        if not isinstance(face, dict):
+            raise HTTPException(status_code=400, detail=f"Face {output_index} must be an object.")
+        face_id = safe_storage_segment(str(face.get("face_id") or f"face_{output_index:03d}"), f"face_{output_index:03d}")
+        if face_id in seen_face_ids:
+            raise HTTPException(status_code=400, detail=f"Duplicate face_id '{face_id}'.")
+        seen_face_ids.add(face_id)
+        crop_bbox = face.get("crop_bbox") or face.get("bbox")
+        if not isinstance(crop_bbox, dict):
+            raise HTTPException(status_code=400, detail=f"Face {face_id} is missing crop_bbox.")
+        character = resolve_character_lora(face.get("character_id"))
+        normalized_faces.append(
+            {
+                "face_id": face_id,
+                "output_index": output_index,
+                "character_id": character["character_id"],
+                "prompt": str(face.get("prompt") or "").strip(),
+                "crop_bbox": crop_bbox,
+                "face_bbox": face.get("face_bbox") or {},
+            }
+        )
+    return normalized_faces
+
+
+def cloud_asset_path(
+    *,
+    user_id: str,
+    job_id: str,
+    asset_type: str,
+    filename: str,
+) -> str:
+    return "/".join(
+        [
+            safe_storage_segment(user_id, "user"),
+            job_id,
+            safe_storage_segment(asset_type, "asset"),
+            safe_storage_segment(filename, "image.png"),
+        ]
+    )
+
+
+def finalize_enhancement_job(job_id: str, user_id: str) -> dict:
+    user = UserContext(user_id=user_id, email=None, access_token=None, is_authenticated=True)
+    job = supabase_gateway.get_enhancement_job(job_id, user)
+    faces = supabase_gateway.list_enhancement_faces(job_id, user_id)
+    if not faces:
+        return supabase_gateway.update_enhancement_job(
+            job_id,
+            user,
+            {"status": "failed", "last_error": "Enhancement job has no face tasks."},
+        )
+
+    if any(face["status"] == "failed" for face in faces):
+        return supabase_gateway.update_enhancement_job(job_id, user, {"status": "failed"})
+    if any(face["status"] != "completed" for face in faces):
+        return supabase_gateway.update_enhancement_job(job_id, user, {"status": "processing"})
+
+    supabase_gateway.update_enhancement_job(
+        job_id,
+        user,
+        {"status": "blending", "last_error": None},
+    )
+    try:
+        original_bytes = download_cloud_image_bytes(job["original_url"])
+        enhanced_faces = [
+            (download_cloud_image_bytes(face["enhanced_crop_url"]), face["crop_bbox"])
+            for face in faces
+        ]
+        final_bytes = blend_enhanced_faces(
+            original_bytes,
+            enhanced_faces,
+            feather_radius=int(job.get("feather_radius") or 24),
+        )
+        final_filename = f"{job_id}-enhanced-original.png"
+        final_bucket = supabase_gateway.bucket_for_asset("enhanced_original")
+        final_path = cloud_asset_path(
+            user_id=user_id,
+            job_id=job_id,
+            asset_type="enhanced_original",
+            filename=final_filename,
+        )
+        final_url = supabase_gateway.upload_bytes(
+            final_path,
+            final_bytes,
+            "image/png",
+            bucket_name=final_bucket,
+            upsert=True,
+        )
+    except (HTTPException, ImageBlendError) as exc:
+        error_message = str(exc.detail if isinstance(exc, HTTPException) else exc)
+        return supabase_gateway.update_enhancement_job(
+            job_id,
+            user,
+            {"status": "blend_failed", "last_error": error_message[:1000]},
+        )
+
+    return supabase_gateway.update_enhancement_job(
+        job_id,
+        user,
+        {
+            "status": "completed",
+            "enhanced_original_bucket": final_bucket,
+            "enhanced_original_path": final_path,
+            "enhanced_original_url": final_url,
+            "last_error": None,
+            "completed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        },
+    )
+
+
+def process_next_enhancement_face() -> dict:
+    face = supabase_gateway.claim_next_enhancement_face()
+    if face is None:
+        return {"status": "idle", "message": "No enhancement face jobs are ready."}
+
+    user = UserContext(
+        user_id=face["user_id"],
+        email=None,
+        access_token=None,
+        is_authenticated=True,
+    )
+    supabase_gateway.update_enhancement_job(
+        face["job_id"],
+        user,
+        {"status": "processing", "last_error": None},
+    )
+    comfyui_url = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188")
+    comfyui_timeout = int(os.getenv("COMFYUI_TIMEOUT_SECONDS", "300"))
+    client = ComfyUIClient(comfyui_url, timeout_seconds=comfyui_timeout)
+    started_at = time.monotonic()
+
+    try:
+        resolved_lora = resolve_character_lora(face["character_id"])
+        crop_bytes = encode_png(load_rgb_image(download_cloud_image_bytes(face["crop_url"])))
+        input_filename = f"{face['job_id']}-{safe_storage_segment(face['face_id'], 'face')}-crop.png"
+        comfy_input_filename = client.upload_image(crop_bytes, input_filename)
+        face = supabase_gateway.update_enhancement_face(
+            face["id"],
+            {
+                "status": "submitted",
+                "comfy_input_filename": comfy_input_filename,
+                "comfy_input_subfolder": "",
+                "comfy_input_type": "input",
+            },
+        )
+        workflow = build_comfyui_workflow(
+            uploaded_image_filename=comfy_input_filename,
+            lora_name=resolved_lora["lora_name"],
+            prompt=face.get("prompt") or "",
+            job_id=f"{face['job_id']}-{safe_storage_segment(face['face_id'], 'face')}",
+        )
+        prompt_id = client.submit_prompt(workflow)
+        face = supabase_gateway.update_enhancement_face(
+            face["id"],
+            {"status": "comfyui_processing", "comfy_prompt_id": prompt_id},
+        )
+        output_image = client.wait_for_output(
+            prompt_id,
+            load_comfyui_node_config()["output_node"],
+        )
+        enhanced_bytes = encode_png(load_rgb_image(client.fetch_image(output_image)))
+        enhanced_filename = f"{face['job_id']}-{safe_storage_segment(face['face_id'], 'face')}-enhanced.png"
+        enhanced_bucket = supabase_gateway.bucket_for_asset("enhanced_crop")
+        enhanced_path = cloud_asset_path(
+            user_id=face["user_id"],
+            job_id=face["job_id"],
+            asset_type="enhanced_crop",
+            filename=enhanced_filename,
+        )
+        enhanced_url = supabase_gateway.upload_bytes(
+            enhanced_path,
+            enhanced_bytes,
+            "image/png",
+            bucket_name=enhanced_bucket,
+            upsert=True,
+        )
+        runtime_seconds = round(time.monotonic() - started_at, 2)
+        completed_face = supabase_gateway.update_enhancement_face(
+            face["id"],
+            {
+                "status": "completed",
+                "enhanced_crop_bucket": enhanced_bucket,
+                "enhanced_crop_path": enhanced_path,
+                "enhanced_crop_url": enhanced_url,
+                "comfy_output": {
+                    "filename": output_image.filename,
+                    "subfolder": output_image.subfolder,
+                    "type": output_image.image_type,
+                },
+                "runtime_seconds": runtime_seconds,
+                "next_retry_at": None,
+                "last_error": None,
+                "completed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+        )
+    except (ComfyUIError, HTTPException, ImageBlendError) as exc:
+        error_message = str(exc.detail if isinstance(exc, HTTPException) else exc)
+        failed_face = supabase_gateway.mark_enhancement_face_failure(
+            face=face,
+            error_message=error_message,
+        )
+        parent_status = "failed" if failed_face["status"] == "failed" else "queued"
+        supabase_gateway.update_enhancement_job(
+            face["job_id"],
+            user,
+            {"status": parent_status, "last_error": error_message[:1000]},
+        )
+        return {
+            "job_id": face["job_id"],
+            "face_id": face["face_id"],
+            "status": failed_face["status"],
+            "retry_count": failed_face.get("retry_count"),
+            "max_retries": failed_face.get("max_retries"),
+            "next_retry_at": failed_face.get("next_retry_at"),
+            "last_error": failed_face.get("last_error"),
+        }
+
+    final_job = finalize_enhancement_job(completed_face["job_id"], completed_face["user_id"])
+    return {
+        "job_id": completed_face["job_id"],
+        "face_id": completed_face["face_id"],
+        "face_status": completed_face["status"],
+        "job_status": final_job["status"],
+        "enhanced_crop_url": completed_face.get("enhanced_crop_url"),
+        "final_image_url": final_job.get("enhanced_original_url"),
+        "comfyui_prompt_id": completed_face.get("comfy_prompt_id"),
+    }
 
 
 @app.get("/health")
@@ -229,16 +506,10 @@ def get_face_enhance_config(user: UserContext = Depends(get_phase2_user)):
         {
             "character_id": character_id,
             "display_name": character.get("display_name", character_id),
-            "lora_name": character.get("lora_name"),
-            "first_pass_node": character.get("first_pass_node", "1056"),
-            "second_pass_node": character.get("second_pass_node", "1057"),
         }
         for character_id, character in sorted(lora_config["characters"].items())
     ]
     return {
-        "workflow_template": str(WORKFLOW_TEMPLATE_PATH.relative_to(Path(__file__).resolve().parent.parent)),
-        "required_nodes": ["958", "1056", "1057", "1071", COMFY_OUTPUT_NODE_ID],
-        "comfyui_url": os.getenv("COMFYUI_URL", "http://127.0.0.1:8188"),
         "default_character_id": lora_config["default_character_id"],
         "characters": characters,
         "character_ids": [character["character_id"] for character in characters],
@@ -325,13 +596,173 @@ async def upload_image_to_cloud_storage(
     }
 
 
+@app.post("/api/v1/enhancement-jobs")
+async def create_enhancement_job(
+    original: UploadFile = File(...),
+    crops: list[UploadFile] = File(...),
+    faces_json: str = Form(...),
+    feather_radius: int = Form(24),
+    max_retries: int = Form(3),
+    user: UserContext = Depends(get_phase2_user),
+):
+    if not supabase_gateway.enabled:
+        raise HTTPException(status_code=503, detail="Supabase cloud storage is required.")
+    if original.content_type not in STORAGE_IMAGE_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Original image must be JPG, PNG, or WebP.")
+    if not 1 <= len(crops) <= 50:
+        raise HTTPException(status_code=400, detail="Upload between 1 and 50 face crops.")
+    if not 0 <= feather_radius <= 128:
+        raise HTTPException(status_code=400, detail="feather_radius must be between 0 and 128.")
+    if not 1 <= max_retries <= 10:
+        raise HTTPException(status_code=400, detail="max_retries must be between 1 and 10.")
+
+    face_specs = parse_enhancement_faces(faces_json, len(crops))
+    original_bytes = await original.read()
+    try:
+        original_image = load_rgb_image(original_bytes)
+    except ImageBlendError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    for face in face_specs:
+        try:
+            normalize_crop_bbox(face["crop_bbox"], original_image.width, original_image.height)
+        except ImageBlendError as exc:
+            raise HTTPException(status_code=400, detail=f"Face {face['face_id']}: {exc}") from exc
+
+    crop_payloads = []
+    for crop in crops:
+        if crop.content_type not in STORAGE_IMAGE_CONTENT_TYPES:
+            raise HTTPException(status_code=400, detail=f"Crop '{crop.filename}' must be JPG, PNG, or WebP.")
+        crop_bytes = await crop.read()
+        try:
+            normalized_crop = encode_png(load_rgb_image(crop_bytes))
+        except ImageBlendError as exc:
+            raise HTTPException(status_code=400, detail=f"Crop '{crop.filename}' is invalid: {exc}") from exc
+        crop_payloads.append((crop, normalized_crop))
+
+    job_id = supabase_gateway.next_enhancement_job_id()
+    original_bucket = supabase_gateway.bucket_for_asset("original")
+    original_filename = f"{safe_filename_stem(original.filename)}-{job_id}-original.png"
+    original_path = cloud_asset_path(
+        user_id=user.user_id,
+        job_id=job_id,
+        asset_type="original",
+        filename=original_filename,
+    )
+    original_url = supabase_gateway.upload_bytes(
+        original_path,
+        encode_png(original_image),
+        "image/png",
+        bucket_name=original_bucket,
+    )
+
+    crop_bucket = supabase_gateway.bucket_for_asset("crop")
+    face_records = []
+    for face_spec, (crop, crop_bytes) in zip(face_specs, crop_payloads):
+        crop_filename = (
+            f"{safe_filename_stem(original.filename)}-{job_id}-"
+            f"{safe_storage_segment(face_spec['face_id'], 'face')}-crop.png"
+        )
+        crop_path = cloud_asset_path(
+            user_id=user.user_id,
+            job_id=job_id,
+            asset_type="crop",
+            filename=crop_filename,
+        )
+        crop_url = supabase_gateway.upload_bytes(
+            crop_path,
+            crop_bytes,
+            "image/png",
+            bucket_name=crop_bucket,
+        )
+        face_records.append(
+            {
+                "job_id": job_id,
+                "user_id": user.user_id,
+                **face_spec,
+                "status": "queued",
+                "crop_bucket": crop_bucket,
+                "crop_path": crop_path,
+                "crop_url": crop_url,
+                "max_retries": max_retries,
+                "next_retry_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            }
+        )
+
+    job_record = {
+        "job_id": job_id,
+        "user_id": user.user_id,
+        "status": "queued",
+        "source_filename": original.filename,
+        "original_bucket": original_bucket,
+        "original_path": original_path,
+        "original_url": original_url,
+        "feather_radius": feather_radius,
+        "max_retries": max_retries,
+        "metadata": {
+            "face_count": len(face_records),
+            "image_width": original_image.width,
+            "image_height": original_image.height,
+            "blend_method": "pil_alpha_feathering",
+        },
+    }
+    created_job = supabase_gateway.create_enhancement_batch(job=job_record, faces=face_records)
+    return {
+        **created_job,
+        "message": f"Queued {len(face_records)} face enhancement task(s).",
+        "local_file_saved": False,
+    }
+
+
+@app.get("/api/v1/enhancement-jobs")
+def list_enhancement_jobs(
+    limit: int = Query(default=10, ge=1, le=50),
+    user: UserContext = Depends(get_phase2_user),
+):
+    return {"jobs": supabase_gateway.list_enhancement_jobs(user, limit)}
+
+
 @app.get("/api/v1/enhancement-jobs/{job_id}")
 def get_enhancement_job(
     job_id: str,
     user: UserContext = Depends(get_phase2_user),
 ):
     resolved_job_id = validate_phase2_job_id(job_id)
-    return supabase_gateway.get_enhancement_job(resolved_job_id, user)
+    return supabase_gateway.get_enhancement_job_with_faces(resolved_job_id, user)
+
+
+@app.post("/api/v1/enhancement-jobs/{job_id}/retry-face")
+def retry_enhancement_face(
+    job_id: str,
+    request: RetryEnhancementFaceRequest,
+    user: UserContext = Depends(get_phase2_user),
+):
+    resolved_job_id = validate_phase2_job_id(job_id)
+    face = supabase_gateway.retry_enhancement_face(
+        job_id=resolved_job_id,
+        face_id=request.face_id,
+        user=user,
+    )
+    supabase_gateway.update_enhancement_job(
+        resolved_job_id,
+        user,
+        {"status": "queued", "last_error": None, "completed_at": None},
+    )
+    return {"job_id": resolved_job_id, "face": face}
+
+
+@app.post("/api/v1/enhancement-jobs/{job_id}/blend")
+def blend_completed_enhancement_job(
+    job_id: str,
+    user: UserContext = Depends(get_phase2_user),
+):
+    resolved_job_id = validate_phase2_job_id(job_id)
+    job = supabase_gateway.get_enhancement_job(resolved_job_id, user)
+    return finalize_enhancement_job(resolved_job_id, job["user_id"])
+
+
+@app.post("/api/v1/workers/enhancement-once")
+def run_enhancement_worker_once(_: None = Depends(require_worker_key)):
+    return process_next_enhancement_face()
 
 
 @app.post("/api/v1/enhancement-jobs/{job_id}/queue-comfy-upload")
@@ -452,7 +883,6 @@ async def enhance_face_crop(
                 "character_id": resolved_lora["character_id"],
                 "lora_name": resolved_lora["lora_name"],
                 "uploaded_image_filename": upload_filename,
-                "output_node_id": COMFY_OUTPUT_NODE_ID,
                 "injected_nodes": workflow_injection_summary(injected_workflow),
             },
         }
@@ -471,23 +901,43 @@ async def enhance_face_crop(
             job_id=job_id,
         )
         prompt_id = client.submit_prompt(injected_workflow)
-        output_image = client.wait_for_output(prompt_id, COMFY_OUTPUT_NODE_ID)
-        enhanced_bytes = client.fetch_image(output_image)
-    except ComfyUIError as exc:
+        output_image = client.wait_for_output(
+            prompt_id,
+            load_comfyui_node_config()["output_node"],
+        )
+        enhanced_bytes = encode_png(load_rgb_image(client.fetch_image(output_image)))
+    except (ComfyUIError, ImageBlendError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     enhanced_filename = f"{job_id}-enhanced-crop.png"
-    enhanced_path = ENHANCED_DIR / enhanced_filename
-    enhanced_path.write_bytes(enhanced_bytes)
+    if supabase_gateway.enabled:
+        enhanced_bucket = supabase_gateway.bucket_for_asset("enhanced_crop")
+        enhanced_storage_path = cloud_asset_path(
+            user_id=user.user_id,
+            job_id=job_id,
+            asset_type="enhanced_crop",
+            filename=enhanced_filename,
+        )
+        enhanced_crop_url = supabase_gateway.upload_bytes(
+            enhanced_storage_path,
+            enhanced_bytes,
+            "image/png",
+            bucket_name=enhanced_bucket,
+        )
+        local_file_saved = False
+    else:
+        enhanced_path = ENHANCED_DIR / enhanced_filename
+        enhanced_path.write_bytes(enhanced_bytes)
+        enhanced_crop_url = f"/storage/enhanced/{enhanced_filename}"
+        local_file_saved = True
     runtime_seconds = round(time.monotonic() - started_at, 2)
 
     return {
         "job_id": job_id,
         "status": "completed",
-        "enhanced_crop_url": f"/storage/enhanced/{enhanced_filename}",
+        "enhanced_crop_url": enhanced_crop_url,
+        "local_file_saved": local_file_saved,
         "metadata": {
-            "workflow_template": "zooey.json",
-            "comfyui_url": comfyui_url,
             "comfyui_prompt_id": prompt_id,
             "comfyui_output": {
                 "filename": output_image.filename,
@@ -495,9 +945,6 @@ async def enhance_face_crop(
                 "type": output_image.image_type,
             },
             "character_id": resolved_lora["character_id"],
-            "lora_name": resolved_lora["lora_name"],
-            "uploaded_image_filename": comfyui_image_name,
-            "output_node_id": COMFY_OUTPUT_NODE_ID,
             "runtime_seconds": runtime_seconds,
             "user_id": user.user_id,
         },

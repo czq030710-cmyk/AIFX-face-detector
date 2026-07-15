@@ -1,0 +1,7 @@
+{
+  "image_node": "PRIVATE_IMAGE_NODE_ID",
+  "first_lora_node": "PRIVATE_FIRST_LORA_NODE_ID",
+  "second_lora_node": "PRIVATE_SECOND_LORA_NODE_ID",
+  "prompt_node": "PRIVATE_PROMPT_NODE_ID",
+  "output_node": "PRIVATE_OUTPUT_NODE_ID"
+}

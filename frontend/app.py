@@ -1008,6 +1008,8 @@ def reset_detection_state():
     st.session_state.pop("uploaded_content_type", None)
     st.session_state.pop("crop_result", None)
     st.session_state.pop("select_all_faces", None)
+    st.session_state.pop("phase2_job_id", None)
+    st.session_state.pop("phase2_job", None)
     st.session_state.upload_uploader_version = st.session_state.get("upload_uploader_version", 0) + 1
     for key in list(st.session_state.keys()):
         if str(key).startswith("select_face_"):
@@ -1031,7 +1033,6 @@ def normalize_character_catalog(face_enhance_config):
             catalog[character_id] = {
                 "character_id": character_id,
                 "display_name": details.get("display_name", character_id),
-                "lora_name": details.get("lora_name", ""),
             }
     else:
         for character in characters:
@@ -1039,7 +1040,6 @@ def normalize_character_catalog(face_enhance_config):
                 catalog[character] = {
                     "character_id": character,
                     "display_name": character.replace("_", " ").title(),
-                    "lora_name": "",
                 }
             else:
                 character_id = character.get("character_id")
@@ -1047,7 +1047,6 @@ def normalize_character_catalog(face_enhance_config):
                     catalog[character_id] = {
                         "character_id": character_id,
                         "display_name": character.get("display_name", character_id),
-                        "lora_name": character.get("lora_name", ""),
                     }
     return catalog
 
@@ -1068,7 +1067,6 @@ def build_enhancement_plan(crop_result, character_catalog):
                 "face_bbox": face["face_bbox"],
                 "target_character_id": character_id,
                 "target_display_name": character.get("display_name", character_id),
-                "target_lora_name": character.get("lora_name", ""),
                 "planned_steps": [
                     "enhance_crop_with_selected_lora",
                     "resize_enhanced_crop_to_crop_bbox",
@@ -1083,11 +1081,10 @@ def build_enhancement_plan(crop_result, character_catalog):
         "original_image_url": crop_result.get("original_image_url"),
         "image_width": crop_result.get("image_width"),
         "image_height": crop_result.get("image_height"),
-        "workflow_template": "zooey.json",
-        "enhance_endpoint": "/api/v1/face-enhance",
+        "queue_endpoint": "/api/v1/enhancement-jobs",
         "blend_strategy": {
             "target_region": "crop_bbox",
-            "mask": "future_soft_edge_mask",
+            "mask": "gaussian_feather_mask",
             "feather_radius_px": 24,
             "placement": "paste enhanced crop back into original image coordinates",
         },
@@ -1095,7 +1092,75 @@ def build_enhancement_plan(crop_result, character_catalog):
     }
 
 
-tab_workspace, tab_history = st.tabs(["Workspace", "Task History"])
+def queue_enhancement_job(
+    *,
+    image_bytes,
+    uploaded_name,
+    uploaded_type,
+    enhancement_plan,
+    feather_radius=24,
+    max_retries=3,
+):
+    files = [
+        (
+            "original",
+            (
+                uploaded_name or "original.png",
+                image_bytes,
+                uploaded_type,
+            ),
+        )
+    ]
+    face_specs = []
+    for output_index, face in enumerate(enhancement_plan["faces"], start=1):
+        crop_bytes = base64.b64decode(
+            st.session_state.crop_result["faces"][output_index - 1]["preview_base64"]
+        )
+        files.append(
+            (
+                "crops",
+                (face["crop_filename"], crop_bytes, "image/png"),
+            )
+        )
+        face_specs.append(
+            {
+                "face_id": f"face_{face['face_index']:03d}",
+                "crop_bbox": face["crop_bbox"],
+                "face_bbox": face["face_bbox"],
+                "character_id": face["target_character_id"],
+                "prompt": "",
+            }
+        )
+    return api_post(
+        "/api/v1/enhancement-jobs",
+        files=files,
+        data={
+            "faces_json": json.dumps(face_specs),
+            "feather_radius": str(feather_radius),
+            "max_retries": str(max_retries),
+        },
+        headers=auth_headers(),
+        timeout=120,
+    )
+
+
+def load_enhancement_job(job_id):
+    response = api_get(
+        f"/api/v1/enhancement-jobs/{job_id}",
+        headers=auth_headers(),
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def remote_image_bytes(url):
+    response = LOCAL_API_SESSION.get(absolute_url(url), timeout=60)
+    response.raise_for_status()
+    return response.content
+
+
+tab_workspace, tab_history, tab_enhancements = st.tabs(["Workspace", "Crop History", "Enhancements"])
 
 with tab_workspace:
     image_bytes = st.session_state.get("uploaded_image_bytes")
@@ -1349,17 +1414,13 @@ with tab_workspace:
                                             else character_options[0]
                                         )
                                     st.selectbox(
-                                        "Target LoRA role",
+                                        "Target character",
                                         character_options,
                                         key=target_key,
                                         format_func=lambda character_id: (
                                             character_catalog.get(character_id, {}).get("display_name", character_id)
                                         ),
-                                        help="Choose the LoRA identity used later to enhance or replace this crop before feather blending it back into the original image.",
-                                    )
-                                    selected_character = character_catalog.get(st.session_state[target_key], {})
-                                    st.caption(
-                                        f"LoRA: {selected_character.get('lora_name', 'unknown')}"
+                                        help="Choose the private character preset used to enhance or replace this crop.",
                                     )
                                 else:
                                     st.warning(
@@ -1371,7 +1432,7 @@ with tab_workspace:
                         plan_json = json.dumps(enhancement_plan, indent=2)
                         st.markdown('<div class="panel-title">Enhancement Plan</div>', unsafe_allow_html=True)
                         st.caption(
-                            "This plan records which saved crop maps to which target LoRA role. It does not run ComfyUI yet."
+                            "This plan records the character selection and coordinates for each crop."
                         )
                         st.download_button(
                             "Download enhancement plan JSON",
@@ -1382,6 +1443,110 @@ with tab_workspace:
                         )
                         with st.expander("Preview enhancement plan", expanded=False):
                             st.json(enhancement_plan)
+
+                        phase2_job_id = st.session_state.get("phase2_job_id")
+                        if not phase2_job_id:
+                            queue_disabled = not api_config.get("supabase_enabled")
+                            if st.button(
+                                "Upload To Cloud And Queue Enhancement",
+                                type="primary",
+                                use_container_width=True,
+                                disabled=queue_disabled,
+                            ):
+                                with st.spinner("Uploading original and selected crops to cloud storage…"):
+                                    try:
+                                        response = queue_enhancement_job(
+                                            image_bytes=image_bytes,
+                                            uploaded_name=uploaded_name,
+                                            uploaded_type=uploaded_type,
+                                            enhancement_plan=enhancement_plan,
+                                        )
+                                        response.raise_for_status()
+                                    except requests.RequestException as exc:
+                                        handle_request_error(exc, st, "Could not create enhancement job")
+                                    else:
+                                        job = response.json()
+                                        st.session_state.phase2_job_id = job["job_id"]
+                                        st.session_state.phase2_job = job
+                                        st.rerun()
+                            if queue_disabled:
+                                st.caption("Cloud queue requires Supabase to be enabled in the backend.")
+
+                        phase2_job_id = st.session_state.get("phase2_job_id")
+                        if phase2_job_id:
+                            refresh_col, clear_col = st.columns(2)
+                            with refresh_col:
+                                if st.button("Refresh Job Status", use_container_width=True):
+                                    try:
+                                        st.session_state.phase2_job = load_enhancement_job(phase2_job_id)
+                                    except requests.RequestException as exc:
+                                        handle_request_error(exc, st, "Could not refresh enhancement job")
+                                    else:
+                                        st.rerun()
+                            with clear_col:
+                                if st.button("Hide Job", use_container_width=True):
+                                    st.session_state.pop("phase2_job_id", None)
+                                    st.session_state.pop("phase2_job", None)
+                                    st.rerun()
+
+                            job = st.session_state.get("phase2_job") or {}
+                            job_faces = job.get("faces", [])
+                            completed_count = sum(face.get("status") == "completed" for face in job_faces)
+                            st.markdown(
+                                f"**Job {escape(phase2_job_id)}** · {escape(job.get('status', 'queued'))} · "
+                                f"{completed_count}/{len(job_faces)} faces complete"
+                            )
+                            if job.get("last_error"):
+                                st.error(job["last_error"])
+
+                            comparison = st.container(height=430, border=True)
+                            with comparison:
+                                if job.get("original_url"):
+                                    st.caption("Original")
+                                    st.image(job["original_url"], width="stretch")
+                                for face in job_faces:
+                                    st.caption(
+                                        f"{face.get('face_id', 'face')} · "
+                                        f"{face.get('status', 'queued')} · "
+                                        f"{character_catalog.get(face.get('character_id'), {}).get('display_name', face.get('character_id'))}"
+                                    )
+                                    if face.get("enhanced_crop_url"):
+                                        st.image(face["enhanced_crop_url"], width="stretch")
+                                    if face.get("status") == "failed":
+                                        if st.button(
+                                            "Retry This Face",
+                                            key=f"retry_face_{face['id']}",
+                                            use_container_width=True,
+                                        ):
+                                            try:
+                                                response = api_post(
+                                                    f"/api/v1/enhancement-jobs/{phase2_job_id}/retry-face",
+                                                    json={"face_id": face["id"]},
+                                                    headers=auth_headers(),
+                                                    timeout=30,
+                                                )
+                                                response.raise_for_status()
+                                                st.session_state.phase2_job = load_enhancement_job(phase2_job_id)
+                                            except requests.RequestException as exc:
+                                                handle_request_error(exc, st, "Could not retry face")
+                                            else:
+                                                st.rerun()
+                                if job.get("enhanced_original_url"):
+                                    st.caption("Final blended image")
+                                    st.image(job["enhanced_original_url"], width="stretch")
+                            if job.get("enhanced_original_url"):
+                                try:
+                                    final_bytes = remote_image_bytes(job["enhanced_original_url"])
+                                except requests.RequestException:
+                                    st.caption("Final image is available in cloud storage, but download is temporarily unavailable.")
+                                else:
+                                    st.download_button(
+                                        "Download Final Image",
+                                        data=final_bytes,
+                                        file_name=f"{phase2_job_id}-enhanced-original.png",
+                                        mime="image/png",
+                                        use_container_width=True,
+                                    )
 
 with tab_history:
     try:
@@ -1414,5 +1579,66 @@ with tab_history:
                         "cropped_image_urls": task.get("cropped_image_urls", []),
                         "settings": task.get("settings", {}),
                         "bounding_boxes": task.get("bounding_boxes", []),
+                    }
+                )
+
+
+with tab_enhancements:
+    try:
+        response = api_get(
+            "/api/v1/enhancement-jobs?limit=10",
+            headers=auth_headers(),
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        handle_request_error(exc, st, "Could not load enhancement history")
+    else:
+        jobs = response.json().get("jobs", [])
+        st.caption("Latest 10 cloud enhancement jobs.")
+        if not jobs:
+            st.info("No enhancement jobs yet.")
+        for job in jobs:
+            faces = job.get("faces", [])
+            completed_count = sum(face.get("status") == "completed" for face in faces)
+            title = (
+                f"{job.get('job_id')} | {job.get('status')} | "
+                f"{completed_count}/{len(faces)} faces"
+            )
+            with st.expander(title):
+                preview_columns = st.columns(3)
+                if job.get("original_url"):
+                    with preview_columns[0]:
+                        st.caption("Original")
+                        st.image(job["original_url"], width="stretch")
+                enhanced_urls = [
+                    face.get("enhanced_crop_url")
+                    for face in faces
+                    if face.get("enhanced_crop_url")
+                ]
+                if enhanced_urls:
+                    with preview_columns[1]:
+                        st.caption("Enhanced crop")
+                        st.image(enhanced_urls[0], width="stretch")
+                if job.get("enhanced_original_url"):
+                    with preview_columns[2]:
+                        st.caption("Final")
+                        st.image(job["enhanced_original_url"], width="stretch")
+                st.json(
+                    {
+                        "job_id": job.get("job_id"),
+                        "status": job.get("status"),
+                        "created_at": job.get("created_at"),
+                        "completed_at": job.get("completed_at"),
+                        "face_statuses": [
+                            {
+                                "face_id": face.get("face_id"),
+                                "status": face.get("status"),
+                                "character_id": face.get("character_id"),
+                                "retry_count": face.get("retry_count"),
+                                "last_error": face.get("last_error"),
+                            }
+                            for face in faces
+                        ],
                     }
                 )

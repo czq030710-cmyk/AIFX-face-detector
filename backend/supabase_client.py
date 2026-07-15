@@ -90,6 +90,7 @@ class SupabaseGateway:
         data: bytes,
         content_type: str,
         bucket_name: str | None = None,
+        upsert: bool = False,
     ) -> str:
         if not self.enabled:
             raise RuntimeError("Supabase is not configured.")
@@ -100,6 +101,7 @@ class SupabaseGateway:
                 data,
                 file_options={
                     "content-type": content_type,
+                    "upsert": "true" if upsert else "false",
                 },
             )
             return bucket.get_public_url(path)
@@ -139,6 +141,14 @@ class SupabaseGateway:
     def next_enhancement_job_id(self) -> str:
         if not self.enabled:
             raise RuntimeError("Supabase is not configured.")
+        try:
+            response = self.service_client.rpc("next_enhancement_job_id").execute()
+            if response.data:
+                return str(response.data)
+        except Exception:
+            # Older databases may not have the atomic counter function yet.
+            pass
+
         prefix = datetime.now().strftime("%Y%m%d")
         try:
             response = (
@@ -159,6 +169,198 @@ class SupabaseGateway:
             if suffix.isdigit():
                 next_number = int(suffix) + 1
         return f"{prefix}_{next_number:02d}"
+
+    def create_enhancement_batch(
+        self,
+        *,
+        job: dict[str, Any],
+        faces: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        if not faces:
+            raise HTTPException(status_code=400, detail="At least one face is required.")
+        try:
+            self.service_client.table("enhancement_jobs").insert(job).execute()
+            self.service_client.table("enhancement_job_faces").insert(faces).execute()
+        except Exception as exc:
+            try:
+                self.service_client.table("enhancement_jobs").delete().eq(
+                    "job_id",
+                    job["job_id"],
+                ).execute()
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=f"Creating enhancement job failed: {exc}") from exc
+        return self.get_enhancement_job_with_faces(job["job_id"], job["user_id"])
+
+    def get_enhancement_job_with_faces(
+        self,
+        job_id: str,
+        user: UserContext | str,
+    ) -> dict[str, Any]:
+        user_id = user.user_id if isinstance(user, UserContext) else user
+        job = self.get_enhancement_job(job_id, UserContext(user_id, None, None, True))
+        job["faces"] = self.list_enhancement_faces(job_id, user_id)
+        return job
+
+    def list_enhancement_faces(self, job_id: str, user_id: str) -> list[dict[str, Any]]:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        try:
+            response = (
+                self.service_client.table("enhancement_job_faces")
+                .select("*")
+                .eq("job_id", job_id)
+                .eq("user_id", user_id)
+                .order("output_index", desc=False)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Loading enhancement faces failed: {exc}") from exc
+        return response.data or []
+
+    def list_enhancement_jobs(self, user: UserContext, limit: int = 10) -> list[dict[str, Any]]:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        try:
+            response = (
+                self.service_client.table("enhancement_jobs")
+                .select("*")
+                .eq("user_id", user.user_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Loading enhancement jobs failed: {exc}") from exc
+        jobs = response.data or []
+        for job in jobs:
+            job["faces"] = self.list_enhancement_faces(job["job_id"], user.user_id)
+        return jobs
+
+    def claim_next_enhancement_face(self) -> dict[str, Any] | None:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        try:
+            response = (
+                self.service_client.table("enhancement_job_faces")
+                .select("*")
+                .in_("status", ["queued", "retrying"])
+                .order("created_at", desc=False)
+                .limit(50)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Loading queued faces failed: {exc}") from exc
+
+        now = datetime.now(timezone.utc)
+        for face in response.data or []:
+            next_retry_at = face.get("next_retry_at")
+            if next_retry_at:
+                try:
+                    retry_at = datetime.fromisoformat(next_retry_at.replace("Z", "+00:00"))
+                except ValueError:
+                    retry_at = now
+                if retry_at > now:
+                    continue
+            try:
+                claimed = (
+                    self.service_client.table("enhancement_job_faces")
+                    .update(
+                        {
+                            "status": "processing",
+                            "updated_at": now.isoformat(timespec="seconds"),
+                        }
+                    )
+                    .eq("id", face["id"])
+                    .in_("status", ["queued", "retrying"])
+                    .execute()
+                )
+            except Exception:
+                continue
+            if claimed.data:
+                return claimed.data[0]
+        return None
+
+    def update_enhancement_face(
+        self,
+        face_id: str,
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.enabled:
+            raise RuntimeError("Supabase is not configured.")
+        update_fields = {
+            **fields,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        try:
+            response = (
+                self.service_client.table("enhancement_job_faces")
+                .update(update_fields)
+                .eq("id", face_id)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Updating enhancement face failed: {exc}") from exc
+        if not response.data:
+            raise HTTPException(status_code=404, detail=f"Enhancement face '{face_id}' was not found.")
+        return response.data[0]
+
+    def mark_enhancement_face_failure(
+        self,
+        *,
+        face: dict[str, Any],
+        error_message: str,
+    ) -> dict[str, Any]:
+        retry_count = int(face.get("retry_count") or 0) + 1
+        max_retries = int(face.get("max_retries") or 3)
+        failed_permanently = retry_count >= max_retries
+        next_retry_at = None
+        if not failed_permanently:
+            next_retry_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=2 ** retry_count)
+            ).isoformat(timespec="seconds")
+        return self.update_enhancement_face(
+            face["id"],
+            {
+                "status": "failed" if failed_permanently else "retrying",
+                "retry_count": retry_count,
+                "next_retry_at": next_retry_at,
+                "last_error": error_message[:1000],
+            },
+        )
+
+    def retry_enhancement_face(
+        self,
+        *,
+        job_id: str,
+        face_id: str,
+        user: UserContext,
+    ) -> dict[str, Any]:
+        try:
+            response = (
+                self.service_client.table("enhancement_job_faces")
+                .select("*")
+                .eq("id", face_id)
+                .eq("job_id", job_id)
+                .eq("user_id", user.user_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Loading enhancement face failed: {exc}") from exc
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Enhancement face was not found.")
+        return self.update_enhancement_face(
+            face_id,
+            {
+                "status": "queued",
+                "retry_count": 0,
+                "next_retry_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "last_error": None,
+            },
+        )
 
     def save_enhancement_upload(
         self,

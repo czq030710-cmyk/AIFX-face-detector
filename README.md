@@ -28,12 +28,12 @@ Phase 1 local prototype for AIFX Studio face detection, cropping, and task-histo
 - If Supabase credentials are missing, the app stays usable in local demo mode and writes task history to `storage/task_history.json`.
 - The task history view shows the latest 10 tasks for the current logged-in user.
 - Saved original and crop filenames keep the uploaded image name plus a short task id, for example `abc-original-a1b2c3d4.png` and `abc-crops-01-a1b2c3d4.png`.
-- Phase 2 Day 1 is started: the backend loads local-only `backend/workflows/zooey.json` as a private ComfyUI workflow template, injects crop image, LoRA, prompt, and output prefix at runtime, and exposes a crop-only enhancement API.
-- Phase 2 dry-run validation passes without ComfyUI running, confirming nodes `958`, `1056`, `1057`, `1071`, and `866` are injected correctly.
+- Phase 2 backend flow is implemented: the backend loads a local-only private ComfyUI workflow, injects crop image, character LoRA, prompt, and output prefix at runtime, and exposes both synchronous diagnostics and an asynchronous multi-face queue.
+- Private ComfyUI node ids live only in ignored `config/comfyui_config.json`; Git tracks a placeholder example without production node values.
 - Phase 2 character LoRA catalog is loaded from local-only `config/lora_config.json`; commit only `config/lora_config.example.json`, because real LoRA filenames and role ids are private.
-- After crops are saved, the frontend lets the user assign a target LoRA role to each crop and download an enhancement-plan JSON for later ComfyUI enhancement and feathered placement back into the original image.
-- Phase 2 cloud-storage handoff has started with `POST /api/v1/storage/images`, which uploads an image directly to one of four Supabase Storage buckets and returns a cloud URL without saving a local copy.
-- Docker and final QA are next.
+- After crops are saved, the frontend lets the user assign a target character, create a Supabase-backed job, refresh per-face status, retry failures, preview original/enhanced/final images, and download the final blended image.
+- Phase 2 uses four Supabase buckets, a parent job table, independently retryable face rows, a protected worker, bounded exponential backoff, ComfyUI output recall, and PIL alpha feathering back into the original coordinates.
+- Local automated tests cover queue completion, ComfyUI output parsing, retry limits, bbox validation, and feather blending. Real Windows ComfyUI validation and cloud host deployment remain environment-dependent handoff steps.
 
 ## Working Agreement
 
@@ -341,13 +341,13 @@ On a local machine, create or restore the private workflow at:
 backend/workflows/zooey.json
 ```
 
-- `958.inputs.image`: uploaded cropped face filename in ComfyUI input storage.
-- `1056.inputs.lora_name`: first-pass character LoRA.
-- `1057.inputs.lora_name`: second-pass character LoRA.
-- `1071.inputs.text`: optional manual enhancement prompt.
-- `866.inputs.filename_prefix`: unique Phase 2 job prefix.
+The private node mapping is stored separately so real ComfyUI node ids are not published:
 
-Character-to-LoRA mapping lives in local-only `config/lora_config.json`. It converts readable API ids into the exact ComfyUI LoRA filenames discovered from the private ComfyUI LoRA list.
+```bash
+cp config/comfyui_config.example.json config/comfyui_config.json
+```
+
+Fill `config/comfyui_config.json` locally with the workflow's image, LoRA, prompt, and output node ids. The real file is ignored by Git. Character-to-LoRA mapping lives in local-only `config/lora_config.json`; the authenticated frontend receives only `character_id` and display name, never the private `.safetensors` filename.
 
 Create the local file from the safe template:
 
@@ -361,7 +361,7 @@ Example shape:
 character_id -> private local .safetensors filename
 ```
 
-Tool/video LoRAs should be excluded from the character catalog. To add or rename a selectable character, edit local `config/lora_config.json` and keep `first_pass_node` and `second_pass_node` set to `1056` and `1057` for the current private `zooey.json` workflow.
+Tool/video LoRAs should be excluded from the character catalog. To add or rename a selectable character, edit local `config/lora_config.json`. Do not commit the private workflow, node mapping, LoRA catalog, `.env`, or Windows network details.
 
 The frontend uses the same catalog after `Save Selected Crops`. Each saved crop can be assigned a target character. The generated enhancement-plan JSON includes:
 
@@ -369,8 +369,8 @@ The frontend uses the same catalog after `Save Selected Crops`. Each saved crop 
 - crop URL and crop filename
 - `crop_bbox` and `face_bbox`
 - selected `target_character_id`
-- selected display name and exact `target_lora_name`
-- future steps for enhancing the crop, resizing it to `crop_bbox`, and feather-blending it back into the original image
+- selected display name
+- steps for enhancing the crop, resizing it to `crop_bbox`, and feather-blending it back into the original image
 
 This planning step does not call ComfyUI and does not use ComfyUI Node Manager or Model Downloader.
 
@@ -379,11 +379,18 @@ Phase 2 endpoints:
 ```text
 GET  /api/v1/face-enhance/config
 POST /api/v1/storage/images
+POST /api/v1/enhancement-jobs
+GET  /api/v1/enhancement-jobs?limit=10
 GET  /api/v1/enhancement-jobs/{job_id}
+POST /api/v1/enhancement-jobs/{job_id}/retry-face
+POST /api/v1/enhancement-jobs/{job_id}/blend
+POST /api/v1/workers/enhancement-once
 POST /api/v1/enhancement-jobs/{job_id}/queue-comfy-upload
 POST /api/v1/workers/comfy-upload-once
 POST /api/v1/face-enhance
 ```
+
+`POST /api/v1/enhancement-jobs` is the main multi-face asynchronous endpoint. It accepts one `original` file, one or more `crops` files, and a `faces_json` array containing `face_id`, `crop_bbox`, `face_bbox`, `character_id`, and optional `prompt`. It creates one parent row in `enhancement_jobs` plus one independently retryable row per face in `enhancement_job_faces`.
 
 `POST /api/v1/storage/images` is the cloud-only upload step for the upcoming async job queue. It accepts multipart form data:
 
@@ -417,9 +424,71 @@ aifx-enhanced-crops      ComfyUI-enhanced face crop
 aifx-enhanced-originals  final original image after feather blending
 ```
 
-The database should not store image binaries. The `enhancement_jobs` table stores job status, retry metadata, ComfyUI prompt id, and the bucket/path/URL for each of the four image stages.
+The database stores URLs and metadata, not image binaries. `enhancement_jobs` owns the original/final image and overall status. `enhancement_job_faces` owns each crop, character selection, private ComfyUI execution metadata, retry state, and enhanced-crop URL.
 
-The first job queue implementation is Supabase-table-driven. `enhancement_jobs.status` is the waiting list:
+New job ids use an atomic daily counter:
+
+```text
+20260715_01
+20260715_02
+20260716_01
+```
+
+The counter resets naturally when the date changes and avoids duplicate ids when requests arrive close together.
+
+Main multi-face status flow:
+
+```text
+job:  queued -> processing -> blending -> completed
+face: queued -> processing -> submitted -> comfyui_processing -> completed
+error: retrying -> failed
+blend error: blend_failed
+```
+
+The worker claims one ready face at a time. It downloads the crop from Supabase Storage, uploads it to ComfyUI input storage, injects runtime values into the private workflow, submits `/prompt`, polls `/history`, downloads `/view`, and uploads the enhanced crop to `aifx-enhanced-crops`. When every face is complete, the backend resizes each result to `crop_bbox`, applies a PIL Gaussian feather mask, and uploads the merged image to `aifx-enhanced-originals`.
+
+Retry behavior is bounded exponential backoff:
+
+```text
+failure 1 waits 2 seconds
+failure 2 waits 4 seconds
+failure 3 reaches the default retry limit
+```
+
+Set `max_retries` between 1 and 10 per job. A failed face can be requeued from the frontend without rerunning successful faces.
+
+Start the three local processes in separate Terminal windows:
+
+```bash
+cd /Users/zooeychen/Desktop/aifx-phase1
+source venv/bin/activate
+set -a
+source .env
+set +a
+uvicorn backend.main:app --reload
+```
+
+```bash
+cd /Users/zooeychen/Desktop/aifx-phase1
+source venv/bin/activate
+set -a
+source .env
+set +a
+python -m backend.worker
+```
+
+```bash
+cd /Users/zooeychen/Desktop/aifx-phase1
+source venv/bin/activate
+set -a
+source .env
+set +a
+streamlit run frontend/app.py
+```
+
+The CLI worker reads queue rows directly from Supabase and must run on a Mac/Linux host that can reach the private ComfyUI machine. This is important when FastAPI is hosted in the cloud: the cloud API does not need access to the Windows LAN. `AIFX_WORKER_API_KEY` protects the optional manual HTTP worker endpoint through `X-Worker-Key`; the normal `python -m backend.worker` process does not call that endpoint. ComfyUI remains private and clients interact only with FastAPI.
+
+The older upload-only queue remains available for connectivity testing. Its `enhancement_jobs.status` values are:
 
 ```text
 crop_uploaded
@@ -430,7 +499,7 @@ retrying_comfy_upload
 failed_comfy_upload
 ```
 
-`POST /api/v1/enhancement-jobs/{job_id}/queue-comfy-upload` moves a job with a saved crop into the queue. `POST /api/v1/workers/comfy-upload-once` processes one ready queue item by downloading `crop_url` from Supabase Storage and uploading it to ComfyUI `/upload/image`. It intentionally does not call ComfyUI `/prompt`, so no enhancement workflow runs at this stage.
+`POST /api/v1/enhancement-jobs/{job_id}/queue-comfy-upload` and `POST /api/v1/workers/comfy-upload-once` only verify upload connectivity. They intentionally do not submit `/prompt`.
 
 Retry behavior:
 
@@ -441,45 +510,25 @@ retry 3 waits 8 seconds
 then status becomes failed_comfy_upload
 ```
 
-Example:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/storage/images \
-  -H "Authorization: Bearer your-token-or-phase2-api-key" \
-  -F image=@storage/crops/example-crop.png \
-  -F asset_type=crop \
-  -F job_id=20260710_01 \
-  -F purpose=phase2-input
-```
-
 `POST /api/v1/face-enhance` accepts multipart form data:
 
 ```text
 image=<cropped face image>
-character_id=cousin_sean
+character_id=character_01
 prompt=optional enhancement instruction
 dry_run=true|false
 ```
 
 Use `dry_run=true` when ComfyUI is not running. This validates template loading, node mapping, LoRA resolution, and request-specific injection without submitting `/prompt`.
 
-Example dry run:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/face-enhance \
-  -F image=@storage/crops/CaveaMan_v2-crops-01-522567e1.png \
-  -F character_id=cousin_sean \
-  -F prompt="natural face enhancement, realistic skin texture" \
-  -F dry_run=true
-```
-
-When ComfyUI is running, leave `dry_run=false`. The backend uploads the crop to ComfyUI `/upload/image`, submits the injected workflow to `/prompt`, polls `/history/{prompt_id}`, downloads the image from `/view`, and saves the result under `storage/enhanced/`.
+When ComfyUI is running, leave `dry_run=false`. This synchronous endpoint is retained for one-crop diagnostics. The multi-face cloud queue is the preferred application flow.
 
 ComfyUI defaults:
 
 ```text
-COMFYUI_URL=http://127.0.0.1:8188
+COMFYUI_URL=http://private-comfyui-host:8189
 COMFYUI_TIMEOUT_SECONDS=300
+AIFX_WORKER_API_KEY=replace-with-a-long-random-secret
 ```
 
 Optional API-key protection for Phase 2:

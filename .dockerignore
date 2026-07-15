@@ -1,0 +1,13 @@
+.git
+.env
+.DS_Store
+venv
+.venv
+storage
+output
+tmp
+__pycache__
+*.pyc
+config/lora_config.json
+config/comfyui_config.json
+backend/workflows/zooey.json
