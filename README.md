@@ -531,6 +531,11 @@ COMFYUI_TIMEOUT_SECONDS=300
 AIFX_WORKER_API_KEY=replace-with-a-long-random-secret
 ```
 
+If the worker unexpectedly tries `127.0.0.1:8188`, `COMFYUI_URL` was not loaded.
+Add the private ComfyUI URL to `.env`, then run `set -a`, `source .env`, and
+`set +a` in the worker terminal before starting `python -m backend.worker`.
+The private address belongs only in `.env`; do not add it to tracked config or logs.
+
 Optional API-key protection for Phase 2:
 
 ```text
