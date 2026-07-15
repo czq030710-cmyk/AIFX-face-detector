@@ -86,6 +86,18 @@ class FakeComfyUIClient:
 
 
 class EnhancementWorkerTests(unittest.TestCase):
+    def test_local_mode_returns_empty_enhancement_history(self):
+        class DisabledGateway:
+            enabled = False
+
+        with patch.object(main, "supabase_gateway", DisabledGateway()):
+            result = main.list_enhancement_jobs(
+                limit=10,
+                user=main.UserContext("local-user", None, None, False),
+            )
+
+        self.assertEqual(result, {"storage_provider": "local", "jobs": []})
+
     def test_worker_completes_face_and_blends_final_image(self):
         gateway = FakeGateway()
         original = encode_png(Image.new("RGB", (80, 80), (20, 40, 180)))

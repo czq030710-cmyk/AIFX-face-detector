@@ -718,7 +718,12 @@ def list_enhancement_jobs(
     limit: int = Query(default=10, ge=1, le=50),
     user: UserContext = Depends(get_phase2_user),
 ):
-    return {"jobs": supabase_gateway.list_enhancement_jobs(user, limit)}
+    if not supabase_gateway.enabled:
+        return {"storage_provider": "local", "jobs": []}
+    return {
+        "storage_provider": "supabase",
+        "jobs": supabase_gateway.list_enhancement_jobs(user, limit),
+    }
 
 
 @app.get("/api/v1/enhancement-jobs/{job_id}")
