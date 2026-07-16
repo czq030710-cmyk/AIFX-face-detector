@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from supabase import create_client
+from supabase.lib.client_options import SyncClientOptions
 
 
 @dataclass
@@ -57,6 +58,35 @@ class SupabaseGateway:
             response = self.auth_client.auth.sign_in_with_password({"email": email, "password": password})
         except Exception as exc:
             raise HTTPException(status_code=401, detail=f"Login failed: {exc}") from exc
+        return self._auth_response_to_dict(response)
+
+    def start_google_oauth(self, redirect_to: str) -> tuple[Any, str]:
+        if not self.auth_client:
+            raise HTTPException(status_code=503, detail="Supabase Auth is not configured.")
+        oauth_client = create_client(
+            self.url,
+            self.anon_key,
+            options=SyncClientOptions(flow_type="pkce", persist_session=True),
+        )
+        try:
+            response = oauth_client.auth.sign_in_with_oauth(
+                {
+                    "provider": "google",
+                    "options": {"redirect_to": redirect_to},
+                }
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Starting Google login failed: {exc}") from exc
+        oauth_url = str(getattr(response, "url", "") or "").strip()
+        if not oauth_url:
+            raise HTTPException(status_code=502, detail="Supabase did not return a Google login URL.")
+        return oauth_client, oauth_url
+
+    def exchange_oauth_code(self, oauth_client: Any, code: str) -> dict[str, Any]:
+        try:
+            response = oauth_client.auth.exchange_code_for_session({"auth_code": code})
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail=f"Google login callback failed: {exc}") from exc
         return self._auth_response_to_dict(response)
 
     def get_user_from_authorization(self, authorization: str | None) -> UserContext:

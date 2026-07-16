@@ -12,12 +12,14 @@ from uuid import uuid4
 
 import requests
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 from backend.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.image_blender import ImageBlendError, blend_enhanced_faces, encode_png, load_rgb_image, normalize_crop_bbox
+from backend.oauth_flow import OAuthFlowStore, append_query_params, validate_app_redirect
 from core_ai.face_detector import FaceDetector
 from backend.supabase_client import SupabaseGateway, UserContext
 
@@ -32,6 +34,7 @@ TILE_SCAN_GRID = "2x2"
 TILE_SCAN_TILE_RATIO = 0.62
 TILE_SCAN_MIN_SIDE = 900
 supabase_gateway = SupabaseGateway()
+oauth_flow_store = OAuthFlowStore()
 
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 ORIGINALS_DIR = STORAGE_DIR / "originals"
@@ -56,6 +59,10 @@ app.mount("/storage", StaticFiles(directory=STORAGE_DIR), name="storage")
 class AuthCredentials(BaseModel):
     email: str
     password: str
+
+
+class OAuthTicketRequest(BaseModel):
+    ticket: str
 
 
 class CropSelectionRequest(BaseModel):
@@ -110,6 +117,24 @@ def bearer_token(authorization: str | None) -> str:
     if scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="Authorization header must use Bearer token.")
     return token.strip()
+
+
+def oauth_allowed_app_redirects() -> list[str]:
+    configured = os.getenv(
+        "AIFX_OAUTH_ALLOWED_REDIRECTS",
+        "http://127.0.0.1:8501,http://localhost:8501",
+    )
+    return [value.strip() for value in configured.split(",") if value.strip()]
+
+
+def oauth_api_public_url() -> str:
+    value = os.getenv("AIFX_API_PUBLIC_URL", "http://127.0.0.1:8000").strip().rstrip("/")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=500, detail="AIFX_API_PUBLIC_URL must be an absolute HTTP(S) URL.")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise HTTPException(status_code=500, detail="AIFX_API_PUBLIC_URL contains unsupported URL components.")
+    return value
 
 
 def safe_filename_stem(filename: str | None) -> str:
@@ -964,6 +989,72 @@ def sign_up(credentials: AuthCredentials):
 @app.post("/auth/login")
 def sign_in(credentials: AuthCredentials):
     return supabase_gateway.sign_in(credentials.email, credentials.password)
+
+
+@app.get("/auth/google/start")
+def start_google_sign_in(
+    app_redirect: str = Query(default="http://127.0.0.1:8501"),
+):
+    try:
+        resolved_app_redirect = validate_app_redirect(
+            app_redirect,
+            oauth_allowed_app_redirects(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    state = oauth_flow_store.new_state()
+    callback_url = f"{oauth_api_public_url()}/auth/google/callback/{state}"
+    oauth_client, oauth_url = supabase_gateway.start_google_oauth(callback_url)
+    oauth_flow_store.save_flow(state, oauth_client, resolved_app_redirect)
+    return RedirectResponse(oauth_url, status_code=302)
+
+
+@app.get("/auth/google/callback/{state}")
+def complete_google_sign_in_callback(
+    state: str,
+    code: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    error_description: str | None = Query(default=None),
+):
+    flow = oauth_flow_store.consume_flow(state)
+    if flow is None:
+        raise HTTPException(status_code=400, detail="Google login state is invalid or expired. Start again from AIFX.")
+
+    if error or not code:
+        message = (error_description or error or "Google login was cancelled.")[:240]
+        return RedirectResponse(
+            append_query_params(flow.app_redirect, oauth_error=message),
+            status_code=302,
+        )
+
+    try:
+        auth_payload = supabase_gateway.exchange_oauth_code(flow.client, code)
+    except HTTPException as exc:
+        return RedirectResponse(
+            append_query_params(flow.app_redirect, oauth_error=str(exc.detail)[:240]),
+            status_code=302,
+        )
+
+    if not auth_payload.get("access_token"):
+        return RedirectResponse(
+            append_query_params(flow.app_redirect, oauth_error="Google login returned no Supabase session."),
+            status_code=302,
+        )
+
+    ticket = oauth_flow_store.issue_ticket(auth_payload)
+    return RedirectResponse(
+        append_query_params(flow.app_redirect, oauth_ticket=ticket),
+        status_code=302,
+    )
+
+
+@app.post("/auth/google/complete")
+def consume_google_sign_in_ticket(request: OAuthTicketRequest):
+    auth_payload = oauth_flow_store.consume_ticket(request.ticket.strip())
+    if auth_payload is None:
+        raise HTTPException(status_code=400, detail="Google login ticket is invalid, expired, or already used.")
+    return auth_payload
 
 
 @app.get("/tasks")

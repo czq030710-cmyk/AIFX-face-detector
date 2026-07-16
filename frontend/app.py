@@ -3,6 +3,7 @@ import base64
 import json
 from html import escape
 from io import BytesIO
+from urllib.parse import urlencode
 
 from PIL import Image, ImageDraw
 import requests
@@ -10,6 +11,7 @@ import streamlit as st
 
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+AIFX_FRONTEND_URL = os.getenv("AIFX_FRONTEND_URL", "http://127.0.0.1:8501")
 LOCAL_API_SESSION = requests.Session()
 LOCAL_API_SESSION.trust_env = False
 BEST_DETECTION_RANGE = "balanced"
@@ -208,6 +210,42 @@ st.markdown(
         color: #939BAA;
         font-size: 0.84rem;
         line-height: 1.45;
+    }
+    .auth-divider {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: #7F8796;
+        font-size: 0.78rem;
+        margin: 14px 0;
+    }
+    .auth-divider::before,
+    .auth-divider::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: rgba(255,255,255,0.12);
+    }
+    div[data-testid="stLinkButton"] a {
+        min-height: 48px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.22);
+        background: #FFFFFF;
+        color: #202124;
+        font-weight: 720;
+        letter-spacing: 0;
+        text-transform: none;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+        transition: transform 160ms ease, background-color 160ms ease;
+    }
+    div[data-testid="stLinkButton"] a:hover {
+        background: #F7F8FA;
+        color: #111318;
+        transform: translateY(-1px);
+    }
+    div[data-testid="stLinkButton"] a:focus-visible {
+        outline: 2px solid #6EA8FF;
+        outline-offset: 2px;
     }
     div[data-testid="stTextInput"] input {
         border-radius: 12px;
@@ -602,11 +640,43 @@ def save_auth_session(auth_payload):
     user = auth_payload.get("user") or {}
     if token:
         st.session_state.auth_token = token
+        st.session_state.auth_refresh_token = auth_payload.get("refresh_token")
+        st.session_state.auth_expires_at = auth_payload.get("expires_at")
         st.session_state.auth_user = user
-        st.sidebar.success(f"Signed in as {user.get('email') or 'user'}")
         st.rerun()
     else:
         st.sidebar.info(auth_payload.get("message", "Account created. Login may require email confirmation."))
+
+
+def google_oauth_start_url():
+    return f"{API_URL}/auth/google/start?{urlencode({'app_redirect': AIFX_FRONTEND_URL})}"
+
+
+def consume_oauth_return():
+    oauth_error = st.query_params.get("oauth_error")
+    oauth_ticket = st.query_params.get("oauth_ticket")
+    if oauth_error:
+        st.query_params.clear()
+        st.session_state.auth_notice = f"Google login failed: {oauth_error}"
+        st.rerun()
+    if not oauth_ticket:
+        return
+
+    try:
+        response = api_post(
+            "/auth/google/complete",
+            json={"ticket": oauth_ticket},
+            timeout=20,
+        )
+        response.raise_for_status()
+        auth_payload = response.json()
+    except requests.RequestException as exc:
+        st.query_params.clear()
+        st.session_state.auth_notice = f"Google login failed while creating the AIFX session: {exc}"
+        st.rerun()
+
+    st.query_params.clear()
+    save_auth_session(auth_payload)
 
 
 def submit_auth(auth_mode, email, password, location):
@@ -622,12 +692,8 @@ def submit_auth(auth_mode, email, password, location):
         location.error(f"{auth_mode} failed: {exc}")
     else:
         auth_payload = response.json()
-        token = auth_payload.get("access_token")
-        user = auth_payload.get("user") or {}
-        if token:
-            st.session_state.auth_token = token
-            st.session_state.auth_user = user
-            st.rerun()
+        if auth_payload.get("access_token"):
+            save_auth_session(auth_payload)
         else:
             location.info(auth_payload.get("message", "Account created. Login may require email confirmation."))
 
@@ -636,6 +702,8 @@ def handle_request_error(exc, location, action):
     message = str(exc)
     if "401" in message or "Unauthorized" in message:
         st.session_state.pop("auth_token", None)
+        st.session_state.pop("auth_refresh_token", None)
+        st.session_state.pop("auth_expires_at", None)
         st.session_state.pop("auth_user", None)
         st.session_state.auth_notice = "Your login expired. Please sign in again, then continue."
         st.rerun()
@@ -673,11 +741,18 @@ def render_login_page():
             """
             <div class="login-panel">
                 <div class="login-panel-title">Welcome back</div>
-                <div class="login-panel-copy">Use your AIFX account to continue. New users can create an account from this panel.</div>
+                <div class="login-panel-copy">Continue with Google or use your AIFX email account.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        st.link_button(
+            "Continue with Google",
+            google_oauth_start_url(),
+            icon=":material/account_circle:",
+            use_container_width=True,
+        )
+        st.markdown('<div class="auth-divider">or use email</div>', unsafe_allow_html=True)
         auth_mode = st.radio("Account action", ["Login", "Sign up"], horizontal=True, label_visibility="collapsed")
         email = st.text_input("Email", placeholder="you@example.com")
         password = st.text_input("Password", type="password", placeholder="Password")
@@ -703,6 +778,7 @@ if not api_config.get("api_available"):
     st.stop()
 
 if supabase_enabled and not st.session_state.get("auth_token"):
+    consume_oauth_return()
     render_login_page()
     st.stop()
 
@@ -735,6 +811,8 @@ if supabase_enabled:
     )
     if st.sidebar.button("Sign out", use_container_width=True):
         st.session_state.pop("auth_token", None)
+        st.session_state.pop("auth_refresh_token", None)
+        st.session_state.pop("auth_expires_at", None)
         st.session_state.pop("auth_user", None)
         st.rerun()
 else:
